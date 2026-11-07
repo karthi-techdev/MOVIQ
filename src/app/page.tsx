@@ -759,6 +759,11 @@ function CinemaApp() {
             onStandUp={handleStandUp}
             onToggleVoice={handleToggleVoice}
             onLeaveVoice={handleLeaveVoice}
+            onVirtualKey={(code, pressed) => {
+              if (engineRef.current) {
+                engineRef.current.setVirtualKey(code, pressed);
+              }
+            }}
           />
 
           <ChatPanel

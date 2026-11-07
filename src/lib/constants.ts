@@ -26,7 +26,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   // --- Female Characters (6 models) ---
   character_406814: {
     name: "Female 1",
-    icon: "👩",
+    icon: "F1",
     url: "/assets/characters/female/character_406814.glb",
     modelScale: 0.539,
     targetHeight: 0.67,
@@ -37,7 +37,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406815: {
     name: "Female 2",
-    icon: "👱‍♀️",
+    icon: "F2",
     url: "/assets/characters/female/character_406815.glb",
     modelScale: 0.447,
     targetHeight: 0.68,
@@ -48,7 +48,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406816: {
     name: "Female 3",
-    icon: "🏃‍♀️",
+    icon: "F3",
     url: "/assets/characters/female/character_406816.glb",
     modelScale: 0.495,
     targetHeight: 0.67,
@@ -59,7 +59,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406817: {
     name: "Female 4",
-    icon: "🧘‍♀️",
+    icon: "F4",
     url: "/assets/characters/female/character_406817.glb",
     modelScale: 0.519,
     targetHeight: 0.66,
@@ -70,7 +70,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406825: {
     name: "Female 5",
-    icon: "💃",
+    icon: "F5",
     url: "/assets/characters/female/character_406825.glb",
     modelScale: 0.486,
     targetHeight: 0.68,
@@ -81,7 +81,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406826: {
     name: "Female 6",
-    icon: "💁‍♀️",
+    icon: "F6",
     url: "/assets/characters/female/character_406826.glb",
     modelScale: 0.483,
     targetHeight: 0.68,
@@ -94,7 +94,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   // --- Male Characters (7 models) ---
   character_406818: {
     name: "Male 1",
-    icon: "👨",
+    icon: "M1",
     url: "/assets/characters/male/character_406818.glb",
     modelScale: 0.475,
     targetHeight: 0.71,
@@ -105,7 +105,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406819: {
     name: "Male 2",
-    icon: "🧑",
+    icon: "M2",
     url: "/assets/characters/male/character_406819.glb",
     modelScale: 0.471,
     targetHeight: 0.71,
@@ -116,7 +116,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406820: {
     name: "Male 3",
-    icon: "🏃‍♂️",
+    icon: "M3",
     url: "/assets/characters/male/character_406820.glb",
     modelScale: 0.472,
     targetHeight: 0.71,
@@ -127,7 +127,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406821: {
     name: "Male 4",
-    icon: "🚴‍♂️",
+    icon: "M4",
     url: "/assets/characters/male/character_406821.glb",
     modelScale: 0.477,
     targetHeight: 0.70,
@@ -138,7 +138,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406822: {
     name: "Male 5",
-    icon: "🚶‍♂️",
+    icon: "M5",
     url: "/assets/characters/male/character_406822.glb",
     modelScale: 0.421,
     targetHeight: 0.73,
@@ -149,7 +149,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406823: {
     name: "Male 6",
-    icon: "🕺",
+    icon: "M6",
     url: "/assets/characters/male/character_406823.glb",
     modelScale: 0.423,
     targetHeight: 0.72,
@@ -160,7 +160,7 @@ export const CHARACTER_PRESETS: Record<string, CharacterPreset> = {
   },
   character_406824: {
     name: "Male 7",
-    icon: "🤵",
+    icon: "M7",
     url: "/assets/characters/male/character_406824.glb",
     modelScale: 0.421,
     targetHeight: 0.72,

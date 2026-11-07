@@ -1,6 +1,31 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import {
+  FiCopy,
+  FiEye,
+  FiVideo,
+  FiMessageSquare,
+  FiSettings,
+  FiMaximize,
+  FiMinimize,
+  FiMic,
+  FiMicOff,
+  FiVolume2,
+  FiPhoneOff,
+  FiArrowUp,
+  FiArrowDown,
+  FiArrowLeft,
+  FiArrowRight,
+  FiSmile
+} from "react-icons/fi";
+import {
+  FaHandsClapping,
+  FaHand,
+  FaFaceLaughSquint,
+  FaCommentDots,
+  FaRotateRight
+} from "react-icons/fa6";
 import { CameraMode, SeatData } from "../types/cinema";
 
 interface CinemaHUDProps {
@@ -27,6 +52,7 @@ interface CinemaHUDProps {
   onStandUp: () => void;
   onToggleVoice: () => void;
   onLeaveVoice: () => void;
+  onVirtualKey?: (code: string, pressed: boolean) => void;
 }
 
 export const CinemaHUD: React.FC<CinemaHUDProps> = ({
@@ -52,16 +78,34 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
   onLeave,
   onStandUp,
   onToggleVoice,
-  onLeaveVoice
+  onLeaveVoice,
+  onVirtualKey
 }) => {
+  const [mobileEmotesOpen, setMobileEmotesOpen] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const handleKeyTouch = (code: string, pressed: boolean) => {
+    if (onVirtualKey) {
+      onVirtualKey(code, pressed);
+    }
+  };
+
+  const toggleRun = () => {
+    const next = !isRunning;
+    setIsRunning(next);
+    if (onVirtualKey) {
+      onVirtualKey("ShiftLeft", next);
+    }
+  };
+
   return (
     <>
       {/* Top Navigation Bar */}
       <header className={`top-bar glass-panel auto-ui ${focusMode ? "hidden-by-focus" : ""}`}>
         <div className="top-bar-left">
           <div className="brand">
-            <span className="brand-mark">VC</span>
-            <span className="brand-word">VIRTUAL CINEMA</span>
+            <span className="brand-mark">M</span>
+            <span className="brand-word">MOVIQ</span>
           </div>
 
           <div className="theatre-identity">
@@ -72,7 +116,7 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
               title="Copy room ID"
               onClick={onCopyRoom}
             >
-              Room <span id="top-room-id">{roomId}</span> <span>⧉</span>
+              Room <span id="top-room-id">{roomId}</span> <FiCopy style={{ marginLeft: 3, verticalAlign: "middle" }} />
             </button>
           </div>
         </div>
@@ -86,51 +130,54 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
             <span id="user-count">{userCount}</span> here
           </span>
 
-          <button
-            id="clap-button"
-            className="icon-button"
-            title="Cheer / Clap! (Shortcut: C)"
-            aria-label="Cheer"
-            onClick={() => onEmote("clap")}
-          >
-            👏
-          </button>
-          <button
-            id="wave-button"
-            className="icon-button"
-            title="Wave! (Shortcut: G)"
-            aria-label="Wave"
-            onClick={() => onEmote("wave")}
-          >
-            👋
-          </button>
-          <button
-            id="laugh-button"
-            className="icon-button"
-            title="Laugh! (Shortcut: L)"
-            aria-label="Laugh"
-            onClick={() => onEmote("laugh")}
-          >
-            😂
-          </button>
-          <button
-            id="talk-button"
-            className="icon-button"
-            title="Talk! (Shortcut: T)"
-            aria-label="Talk"
-            onClick={() => onEmote("talk")}
-          >
-            🗣️
-          </button>
-          <button
-            id="spin-button"
-            className="icon-button"
-            title="360° Spin! (Shortcut: R)"
-            aria-label="Spin"
-            onClick={() => onEmote("turn_360")}
-          >
-            🔄
-          </button>
+          {/* Desktop & Mobile Emotes */}
+          <div className="emotes-group">
+            <button
+              id="clap-button"
+              className="icon-button emote-btn"
+              title="Cheer / Clap! (Shortcut: C)"
+              aria-label="Cheer"
+              onClick={() => onEmote("clap")}
+            >
+              <FaHandsClapping />
+            </button>
+            <button
+              id="wave-button"
+              className="icon-button emote-btn"
+              title="Wave! (Shortcut: G)"
+              aria-label="Wave"
+              onClick={() => onEmote("wave")}
+            >
+              <FaHand />
+            </button>
+            <button
+              id="laugh-button"
+              className="icon-button emote-btn"
+              title="Laugh! (Shortcut: L)"
+              aria-label="Laugh"
+              onClick={() => onEmote("laugh")}
+            >
+              <FaFaceLaughSquint />
+            </button>
+            <button
+              id="talk-button"
+              className="icon-button emote-btn"
+              title="Talk! (Shortcut: T)"
+              aria-label="Talk"
+              onClick={() => onEmote("talk")}
+            >
+              <FaCommentDots />
+            </button>
+            <button
+              id="spin-button"
+              className="icon-button emote-btn"
+              title="360° Spin! (Shortcut: R)"
+              aria-label="Spin"
+              onClick={() => onEmote("turn_360")}
+            >
+              <FaRotateRight />
+            </button>
+          </div>
 
           <button
             id="camera-mode-button"
@@ -139,7 +186,15 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
             aria-label="Toggle camera view"
             onClick={onToggleCamera}
           >
-            {cameraMode === "FPP" ? "👁 FPP" : "🎥 TPP"}
+            {cameraMode === "FPP" ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <FiEye /> FPP
+              </span>
+            ) : (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <FiVideo /> TPP
+              </span>
+            )}
           </button>
 
           <button
@@ -149,7 +204,7 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
             aria-label="Toggle chat"
             onClick={onToggleChat}
           >
-            💬
+            <FiMessageSquare />
             {unreadCount > 0 && !isChatOpen && (
               <span id="unread-badge" className="notification-badge">
                 {unreadCount}
@@ -164,7 +219,7 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
             aria-label="Theatre and movie settings"
             onClick={onToggleSettings}
           >
-            ⚙
+            <FiSettings />
           </button>
 
           <button
@@ -174,7 +229,7 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
             aria-label="Toggle cinema focus mode"
             onClick={onToggleFocus}
           >
-            ⛶
+            {focusMode ? <FiMinimize /> : <FiMaximize />}
           </button>
 
           <button
@@ -219,6 +274,92 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
         <span>Click seat to sit</span>
       </div>
 
+      {/* Mobile Touch Navigation Overlay: Virtual D-Pad & Action Buttons */}
+      <div className={`mobile-touch-controls auto-ui ${focusMode ? "hidden-by-focus" : ""}`}>
+        {/* Virtual D-Pad (Left bottom) */}
+        <div className="virtual-dpad glass-panel">
+          <button
+            className="dpad-btn dpad-up"
+            title="Move Forward"
+            aria-label="Move Forward"
+            onTouchStart={(e) => { e.preventDefault(); handleKeyTouch("KeyW", true); }}
+            onTouchEnd={(e) => { e.preventDefault(); handleKeyTouch("KeyW", false); }}
+            onMouseDown={() => handleKeyTouch("KeyW", true)}
+            onMouseUp={() => handleKeyTouch("KeyW", false)}
+          >
+            <FiArrowUp />
+          </button>
+          <div className="dpad-middle">
+            <button
+              className="dpad-btn dpad-left"
+              title="Move Left"
+              aria-label="Move Left"
+              onTouchStart={(e) => { e.preventDefault(); handleKeyTouch("KeyA", true); }}
+              onTouchEnd={(e) => { e.preventDefault(); handleKeyTouch("KeyA", false); }}
+              onMouseDown={() => handleKeyTouch("KeyA", true)}
+              onMouseUp={() => handleKeyTouch("KeyA", false)}
+            >
+              <FiArrowLeft />
+            </button>
+            <div className="dpad-center-nub" />
+            <button
+              className="dpad-btn dpad-right"
+              title="Move Right"
+              aria-label="Move Right"
+              onTouchStart={(e) => { e.preventDefault(); handleKeyTouch("KeyD", true); }}
+              onTouchEnd={(e) => { e.preventDefault(); handleKeyTouch("KeyD", false); }}
+              onMouseDown={() => handleKeyTouch("KeyD", true)}
+              onMouseUp={() => handleKeyTouch("KeyD", false)}
+            >
+              <FiArrowRight />
+            </button>
+          </div>
+          <button
+            className="dpad-btn dpad-down"
+            title="Move Backward"
+            aria-label="Move Backward"
+            onTouchStart={(e) => { e.preventDefault(); handleKeyTouch("KeyS", true); }}
+            onTouchEnd={(e) => { e.preventDefault(); handleKeyTouch("KeyS", false); }}
+            onMouseDown={() => handleKeyTouch("KeyS", true)}
+            onMouseUp={() => handleKeyTouch("KeyS", false)}
+          >
+            <FiArrowDown />
+          </button>
+        </div>
+
+        {/* Mobile Action Buttons (Right bottom) */}
+        <div className="virtual-actions">
+          {currentSeat ? (
+            <button
+              className="action-btn sit-stand-btn active"
+              onClick={onStandUp}
+              title="Stand Up"
+            >
+              Stand
+            </button>
+          ) : (
+            <button
+              className="action-btn jump-btn"
+              onTouchStart={(e) => { e.preventDefault(); handleKeyTouch("Space", true); }}
+              onTouchEnd={(e) => { e.preventDefault(); handleKeyTouch("Space", false); }}
+              onMouseDown={() => handleKeyTouch("Space", true)}
+              onMouseUp={() => handleKeyTouch("Space", false)}
+              title="Jump"
+            >
+              Jump
+            </button>
+          )}
+
+          <button
+            className={`action-btn run-btn ${isRunning ? "active" : ""}`}
+            onClick={toggleRun}
+            title={isRunning ? "Running" : "Walking"}
+          >
+            {isRunning ? "Run ON" : "Run"}
+          </button>
+        </div>
+      </div>
+
       {/* Bottom Controls Bar */}
       <section className={`bottom-controls glass-panel auto-ui ${focusMode ? "hidden-by-focus" : ""}`}>
         <div className="voice-controls">
@@ -229,8 +370,8 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
             aria-label="Voice chat toggle"
             onClick={onToggleVoice}
           >
-            <span id="mic-icon">
-              {!inVoice ? "🎙" : isMuted ? "🔇" : isSpeaking ? "🗣️" : "🎙️"}
+            <span id="mic-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+              {!inVoice ? <FiMic /> : isMuted ? <FiMicOff /> : isSpeaking ? <FiVolume2 /> : <FiMic />}
             </span>
           </button>
           <div className="control-text">
@@ -246,7 +387,7 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
               title="Leave voice chat"
               onClick={onLeaveVoice}
             >
-              ↩
+              <FiPhoneOff />
             </button>
           )}
         </div>

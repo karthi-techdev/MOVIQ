@@ -851,7 +851,7 @@ function handleMessage(client: ClientSession, raw: any) {
             type: "chat",
             id: generateId(),
             system: true,
-            text: `🎬 Streaming "${title}" directly from YouTube link on curved cinema screen!`,
+            text: `[Stream] Streaming "${title}" directly from YouTube link on curved cinema screen!`,
             timestamp: Date.now()
           });
           return;
@@ -875,7 +875,7 @@ function handleMessage(client: ClientSession, raw: any) {
             type: "chat",
             id: generateId(),
             system: true,
-            text: `🎬 Playing "${title}" from Google Drive with EAC3 Dolby audio support!`,
+            text: `[Stream] Playing "${title}" from Google Drive with EAC3 Dolby audio support!`,
             timestamp: Date.now()
           });
           return;

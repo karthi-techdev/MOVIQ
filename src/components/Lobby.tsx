@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState } from "react";
+import { FiRefreshCw } from "react-icons/fi";
+import { FaPersonDress, FaPerson } from "react-icons/fa6";
 import { RoomSummary } from "../types/cinema";
 import { CHARACTER_PRESETS } from "../lib/constants";
 
@@ -68,8 +70,8 @@ export const Lobby: React.FC<LobbyProps> = ({
 
       <section className="lobby-hero">
         <div className="brand brand-large">
-          <span className="brand-mark">VC</span>
-          <span>VIRTUAL CINEMA</span>
+          <span className="brand-mark">M</span>
+          <span>MOVIQ</span>
         </div>
 
         <div className="hero-copy">
@@ -79,7 +81,7 @@ export const Lobby: React.FC<LobbyProps> = ({
             <span>Together.</span>
           </h1>
           <p className="hero-description">
-            Enter a cinematic virtual auditorium, meet your audience,
+            Enter MOVIQ's immersive 3D virtual cinema, meet your audience,
             take your favorite seat, and watch together in real time.
           </p>
         </div>
@@ -131,7 +133,9 @@ export const Lobby: React.FC<LobbyProps> = ({
               className={`char-card ${selectedChar === key ? "active" : ""}`}
               onClick={() => setSelectedChar(key)}
             >
-              <span className="char-icon">{preset.icon}</span>
+              <span className="char-icon">
+                {preset.name.startsWith("Female") ? <FaPersonDress /> : <FaPerson />}
+              </span>
               <span className="char-name">{preset.name}</span>
             </button>
           ))}
@@ -207,7 +211,7 @@ export const Lobby: React.FC<LobbyProps> = ({
             aria-label="Refresh public theatres"
             onClick={onRefreshRooms}
           >
-            ↻
+            <FiRefreshCw />
           </button>
         </div>
 

@@ -2209,7 +2209,7 @@ export class CinemaEngine {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    const mic = isMicOn ? "" : " 🔇";
+    const mic = isMicOn ? "" : " (Muted)";
     ctx.fillText(`${username}${mic}`, 128, 32);
 
     const texture = new THREE.CanvasTexture(canvas);
@@ -2655,15 +2655,25 @@ export class CinemaEngine {
 
   // --- Interaction & Event Binding ---
 
+  public setVirtualKey(code: string, pressed: boolean) {
+    if (pressed) {
+      this.activeKeys.add(code);
+    } else {
+      this.activeKeys.delete(code);
+    }
+  }
+
   private bindEvents() {
     window.addEventListener("resize", this.onWindowResize);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
 
     const dom = this.renderer.domElement;
+    dom.style.touchAction = "none";
     dom.addEventListener("pointerdown", this.onPointerDown);
     dom.addEventListener("pointermove", this.onPointerMove);
     window.addEventListener("pointerup", this.onPointerUp);
+    dom.addEventListener("pointercancel", this.onPointerUp);
     dom.addEventListener("wheel", this.onWheel, { passive: false });
   }
 
@@ -2726,7 +2736,7 @@ export class CinemaEngine {
 
   private onPointerDown = (e: PointerEvent) => {
     this.spatialAudio.resume();
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.pointerType === "mouse") return;
     this.isPointerDown = true;
     this.dragStartX = e.clientX;
     this.dragStartY = e.clientY;
@@ -2975,6 +2985,7 @@ export class CinemaEngine {
       dom.removeEventListener("pointerdown", this.onPointerDown);
       dom.removeEventListener("pointermove", this.onPointerMove);
       window.removeEventListener("pointerup", this.onPointerUp);
+      dom.removeEventListener("pointercancel", this.onPointerUp);
       dom.removeEventListener("wheel", this.onWheel);
       if (dom.parentElement) {
         dom.parentElement.removeChild(dom);

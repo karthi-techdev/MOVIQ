@@ -25,8 +25,8 @@ const satoshi = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Virtual Cinema",
-  description: "Meet friends, take a seat, talk, and watch movies together in a multiplayer 3D cinema.",
+  title: "MOVIQ — 3D Virtual Cinema",
+  description: "Meet friends, take a seat, talk, and watch movies together in MOVIQ.",
   icons: {
     icon: "/favicon.ico"
   }

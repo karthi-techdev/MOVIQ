@@ -1,6 +1,6 @@
-# Virtual Cinema
+# MOVIQ — 3D Virtual Cinema
 
-A framework-free Three.js multiplayer cinema. Users can create or join a theatre, occupy synchronized seats, chat, talk over WebRTC voice and watch a host-controlled synchronized movie on a 3D screen.
+A Next.js and Three.js multiplayer virtual cinema. Users can create or join a theatre, occupy synchronized seats, chat, talk over WebRTC voice and watch host-controlled synchronized movies on an immersive curved 3D cinema screen.
 
 ## Requirements
 

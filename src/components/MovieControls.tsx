@@ -1,6 +1,21 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import {
+  FiPlay,
+  FiPause,
+  FiVolume2,
+  FiCheck,
+  FiChevronDown,
+  FiHeadphones,
+  FiMaximize2,
+  FiTv,
+  FiCrop,
+  FiFilm,
+  FiVideo,
+  FiMoreHorizontal
+} from "react-icons/fi";
+import { HiBuildingLibrary, HiStar } from "react-icons/hi2";
 import { AudioSpatialMode, MovieState, ScreenFrameMode, VideoQuality } from "../types/cinema";
 
 interface MovieControlsProps {
@@ -92,7 +107,13 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
         <span className="now-playing-label">NOW SHOWING</span>
         <strong id="current-movie-title">{movie.title || "Loading theatre…"}</strong>
         <span id="host-note" className="host-note">
-          {isHost ? "⭐ You are the Host" : "Viewer Mode"}
+          {isHost ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+              <HiStar style={{ color: "#fbbf24" }} /> You are the Host
+            </span>
+          ) : (
+            "Viewer Mode"
+          )}
         </span>
       </div>
 
@@ -105,7 +126,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           onClick={onPlayToggle}
           disabled={!isHost}
         >
-          {movie.playing ? "⏸" : "▶"}
+          {movie.playing ? <FiPause /> : <FiPlay />}
         </button>
 
         <span id="movie-current-time" className="time-label">
@@ -127,7 +148,9 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           {formatTime(duration)}
         </span>
 
-        <span className="volume-icon">🔊</span>
+        <span className="volume-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+          <FiVolume2 />
+        </span>
         <input
           id="movie-volume"
           className="range-input volume-input"
@@ -166,7 +189,19 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 }
               }}
             >
-              {spatialAudioMode === "atmos" ? "🎧 ATMOS 3D ▾" : spatialAudioMode === "hall" ? "🏛️ ECHO HALL ▾" : "🎧 STEREO ▾"}
+              {spatialAudioMode === "atmos" ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <FiHeadphones /> ATMOS 3D <FiChevronDown />
+                </span>
+              ) : spatialAudioMode === "hall" ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <HiBuildingLibrary /> ECHO HALL <FiChevronDown />
+                </span>
+              ) : (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <FiHeadphones /> STEREO <FiChevronDown />
+                </span>
+              )}
             </button>
 
             {isAudioMenuOpen && onSpatialAudioModeChange && (
@@ -189,9 +224,9 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 }}
               >
                 {[
-                  { id: "atmos", label: "🎧 Dolby Atmos 3D", desc: "HRTF 3D + Subwoofer + Surround" },
-                  { id: "hall", label: "🏛️ Multiplex Echo Hall", desc: "Auditorium Wall Echoes & Reverb" },
-                  { id: "stereo", label: "🎧 Standard Stereo", desc: "Direct stereo bypass" }
+                  { id: "atmos", icon: <FiHeadphones style={{ marginRight: 6 }} />, title: "Dolby Atmos 3D", desc: "HRTF 3D + Subwoofer + Surround" },
+                  { id: "hall", icon: <HiBuildingLibrary style={{ marginRight: 6 }} />, title: "Multiplex Echo Hall", desc: "Auditorium Wall Echoes & Reverb" },
+                  { id: "stereo", icon: <FiHeadphones style={{ marginRight: 6 }} />, title: "Standard Stereo", desc: "Direct stereo bypass" }
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -214,9 +249,11 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                       setIsAudioMenuOpen(false);
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", width: "100%", fontWeight: spatialAudioMode === item.id ? 700 : 500 }}>
-                      <span>{item.label}</span>
-                      {spatialAudioMode === item.id && <span>✓</span>}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", fontWeight: spatialAudioMode === item.id ? 700 : 500 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center" }}>
+                        {item.icon} {item.title}
+                      </span>
+                      {spatialAudioMode === item.id && <FiCheck />}
                     </div>
                     <span style={{ fontSize: "8.5px", color: "#94a3b8", marginTop: "2px" }}>{item.desc}</span>
                   </button>
@@ -245,7 +282,9 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
               aria-label="Select video quality"
               onClick={() => setIsQualityMenuOpen(!isQualityMenuOpen)}
             >
-              {quality.toUpperCase()} ▾
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                {quality.toUpperCase()} <FiChevronDown />
+              </span>
             </button>
 
             {isQualityMenuOpen && (
@@ -291,7 +330,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                     }}
                   >
                     <span>{q === "auto" ? "Auto (Adaptive)" : q.toUpperCase()}</span>
-                    {quality === q && <span>✓</span>}
+                    {quality === q && <FiCheck />}
                   </button>
                 ))}
               </div>
@@ -326,7 +365,14 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 }
               }}
             >
-              {frameMode === "stretch" ? "↔️ STRETCH ▾" : frameMode === "stretch-max" ? "↔️ STRETCH+ ▾" : frameMode === "fill" ? "📺 FILL ▾" : frameMode === "fit" ? "📐 FIT ▾" : `📺 ${frameMode} ▾`}
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                {frameMode === "stretch" ? <><FiMaximize2 /> STRETCH</> :
+                 frameMode === "stretch-max" ? <><FiMaximize2 /> STRETCH+</> :
+                 frameMode === "fill" ? <><FiTv /> FILL</> :
+                 frameMode === "fit" ? <><FiCrop /> FIT</> :
+                 <><FiFilm /> {frameMode}</>}
+                <FiChevronDown />
+              </span>
             </button>
 
             {isFrameMenuOpen && onFrameModeChange && (
@@ -340,7 +386,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                   border: "1px solid rgba(255, 255, 255, 0.12)",
                   borderRadius: "10px",
                   padding: "4px",
-                  minWidth: "180px",
+                  minWidth: "190px",
                   boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
                   zIndex: 60,
                   display: "flex",
@@ -349,15 +395,15 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 }}
               >
                 {[
-                  { id: "stretch", label: "↔️ Stretch (Hide Black Bars)", desc: "Expands height to eliminate top & bottom bars" },
-                  { id: "stretch-max", label: "↔️ Stretch Max (Ultra Zoom)", desc: "Maximum vertical stretch for extra-wide letterbox" },
-                  { id: "fill", label: "📺 Fill Screen", desc: "100% curved screen cover" },
-                  { id: "fit", label: "📐 Fit Screen", desc: "Auto original aspect ratio" },
-                  { id: "16:9", label: "🎬 16:9", desc: "Standard widescreen (1.78:1)" },
-                  { id: "21:9", label: "🎥 21:9", desc: "Cinema ultrawide (2.33:1)" },
-                  { id: "2.35:1", label: "🎞️ 2.35:1", desc: "CinemaScope widescreen" },
-                  { id: "2.39:1", label: "🍿 2.39:1", desc: "Theatrical anamorphic" },
-                  { id: "4:3", label: "📺 4:3", desc: "Classic academy ratio" }
+                  { id: "stretch", icon: <FiMaximize2 style={{ marginRight: 6 }} />, title: "Stretch (Hide Black Bars)", desc: "Expands height to eliminate top & bottom bars" },
+                  { id: "stretch-max", icon: <FiMaximize2 style={{ marginRight: 6 }} />, title: "Stretch Max (Ultra Zoom)", desc: "Maximum vertical stretch for extra-wide letterbox" },
+                  { id: "fill", icon: <FiTv style={{ marginRight: 6 }} />, title: "Fill Screen", desc: "100% curved screen cover" },
+                  { id: "fit", icon: <FiCrop style={{ marginRight: 6 }} />, title: "Fit Screen", desc: "Auto original aspect ratio" },
+                  { id: "16:9", icon: <FiFilm style={{ marginRight: 6 }} />, title: "16:9", desc: "Standard widescreen (1.78:1)" },
+                  { id: "21:9", icon: <FiVideo style={{ marginRight: 6 }} />, title: "21:9", desc: "Cinema ultrawide (2.33:1)" },
+                  { id: "2.35:1", icon: <FiFilm style={{ marginRight: 6 }} />, title: "2.35:1", desc: "CinemaScope widescreen" },
+                  { id: "2.39:1", icon: <FiFilm style={{ marginRight: 6 }} />, title: "2.39:1", desc: "Theatrical anamorphic" },
+                  { id: "4:3", icon: <FiTv style={{ marginRight: 6 }} />, title: "4:3", desc: "Classic academy ratio" }
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -382,10 +428,12 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                     }}
                   >
                     <div>
-                      <div>{item.label}</div>
+                      <div style={{ display: "flex", alignItems: "center" }}>
+                        {item.icon} {item.title}
+                      </div>
                       <div style={{ fontSize: "8.5px", color: "#94a3b8" }}>{item.desc}</div>
                     </div>
-                    {frameMode === item.id && <span>✓</span>}
+                    {frameMode === item.id && <FiCheck />}
                   </button>
                 ))}
               </div>
@@ -400,7 +448,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           aria-label="Change movie"
           onClick={onOpenSettings}
         >
-          ⋯
+          <FiMoreHorizontal />
         </button>
       </div>
     </div>

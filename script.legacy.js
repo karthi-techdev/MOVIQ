@@ -1462,7 +1462,7 @@ const CHARACTER_PRESETS = {
   // --- Female Characters (6 models) ---
   character_406814: {
     name: "Female 1",
-    icon: "👩",
+    icon: "",
     url: "./assets/characters/female/character_406814.glb",
     modelScale: 0.539, // Reduced 10% from 0.60
     targetHeight: 0.67,
@@ -1473,7 +1473,7 @@ const CHARACTER_PRESETS = {
   },
   character_406815: {
     name: "Female 2",
-    icon: "👱‍♀️",
+    icon: "‍️",
     url: "./assets/characters/female/character_406815.glb",
     modelScale: 0.447,
     targetHeight: 0.68,
@@ -1484,7 +1484,7 @@ const CHARACTER_PRESETS = {
   },
   character_406816: {
     name: "Female 3",
-    icon: "🏃‍♀️",
+    icon: "‍️",
     url: "./assets/characters/female/character_406816.glb",
     modelScale: 0.495,
     targetHeight: 0.67,
@@ -1495,7 +1495,7 @@ const CHARACTER_PRESETS = {
   },
   character_406817: {
     name: "Female 4",
-    icon: "🧘‍♀️",
+    icon: "‍️",
     url: "./assets/characters/female/character_406817.glb",
     modelScale: 0.519,
     targetHeight: 0.66,
@@ -1506,7 +1506,7 @@ const CHARACTER_PRESETS = {
   },
   character_406825: {
     name: "Female 5",
-    icon: "💃",
+    icon: "",
     url: "./assets/characters/female/character_406825.glb",
     modelScale: 0.486,
     targetHeight: 0.68,
@@ -1517,7 +1517,7 @@ const CHARACTER_PRESETS = {
   },
   character_406826: {
     name: "Female 6",
-    icon: "💁‍♀️",
+    icon: "‍️",
     url: "./assets/characters/female/character_406826.glb",
     modelScale: 0.483,
     targetHeight: 0.68,
@@ -1530,7 +1530,7 @@ const CHARACTER_PRESETS = {
   // --- Male Characters (7 models) ---
   character_406818: {
     name: "Male 1",
-    icon: "👨",
+    icon: "",
     url: "./assets/characters/male/character_406818.glb",
     modelScale: 0.475,
     targetHeight: 0.71,
@@ -1541,7 +1541,7 @@ const CHARACTER_PRESETS = {
   },
   character_406819: {
     name: "Male 2",
-    icon: "🧑",
+    icon: "",
     url: "./assets/characters/male/character_406819.glb",
     modelScale: 0.471,
     targetHeight: 0.71,
@@ -1552,7 +1552,7 @@ const CHARACTER_PRESETS = {
   },
   character_406820: {
     name: "Male 3",
-    icon: "🏃‍♂️",
+    icon: "‍️",
     url: "./assets/characters/male/character_406820.glb",
     modelScale: 0.472,
     targetHeight: 0.71,
@@ -1563,7 +1563,7 @@ const CHARACTER_PRESETS = {
   },
   character_406821: {
     name: "Male 4",
-    icon: "🚴‍♂️",
+    icon: "‍️",
     url: "./assets/characters/male/character_406821.glb",
     modelScale: 0.477,
     targetHeight: 0.70,
@@ -1574,7 +1574,7 @@ const CHARACTER_PRESETS = {
   },
   character_406822: {
     name: "Male 5",
-    icon: "🚶‍♂️",
+    icon: "‍️",
     url: "./assets/characters/male/character_406822.glb",
     modelScale: 0.421,
     targetHeight: 0.73,
@@ -1585,7 +1585,7 @@ const CHARACTER_PRESETS = {
   },
   character_406823: {
     name: "Male 6",
-    icon: "🕺",
+    icon: "",
     url: "./assets/characters/male/character_406823.glb",
     modelScale: 0.423,
     targetHeight: 0.72,
@@ -1596,7 +1596,7 @@ const CHARACTER_PRESETS = {
   },
   character_406824: {
     name: "Male 7",
-    icon: "🤵",
+    icon: "",
     url: "./assets/characters/male/character_406824.glb",
     modelScale: 0.421,
     targetHeight: 0.72,
@@ -1998,7 +1998,7 @@ function createNameplateSprite(name, isSpeaking = false, isMicOn = false) {
   ctx.textBaseline = "middle";
   ctx.fillStyle = isSpeaking ? "#34d399" : "#f3f4f6";
 
-  const prefix = isSpeaking ? "● " : isMicOn ? "🎙 " : "";
+  const prefix = isSpeaking ? "● " : isMicOn ? " " : "";
   ctx.fillText(`${prefix}${name}`.slice(0, 22), 256, 48);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -2155,7 +2155,7 @@ function toggleCameraMode() {
 
 function updateCameraModeUI() {
   if (ui.cameraModeButton) {
-    ui.cameraModeButton.textContent = App.cameraMode === "FPP" ? "👁 FPP" : "🎥 TPP";
+    ui.cameraModeButton.textContent = App.cameraMode === "FPP" ? " FPP" : " TPP";
     ui.cameraModeButton.title = `Switch View (Current: ${App.cameraMode === "FPP" ? "First Person" : "Third Person"}, Press V)`;
   }
 }
@@ -2932,7 +2932,7 @@ function applyMovieState(movie, isFullReload = false) {
     }
     video.play().then(() => {
       if (ui.playbackGate) ui.playbackGate.hidden = true;
-      if (ui.moviePlayButton) ui.moviePlayButton.textContent = "❚❚";
+      if (ui.moviePlayButton) ui.moviePlayButton.textContent = "";
     }).catch(() => {
       // Browser blocked autoplay audio/video
       if (ui.playbackGate) ui.playbackGate.hidden = false;
@@ -2964,7 +2964,7 @@ function bindVideoEvents() {
       App.screenMesh.material.map = App.screenTexture;
       App.screenMesh.material.needsUpdate = true;
     }
-    if (ui.moviePlayButton) ui.moviePlayButton.textContent = "❚❚";
+    if (ui.moviePlayButton) ui.moviePlayButton.textContent = "";
     if (App.isHost && !App.suppressVideoEvents) {
       sendSocket({ type: "playback", action: "play", time: video.currentTime });
     }
@@ -3084,7 +3084,7 @@ function updatePeopleList() {
       </div>
       <div class="people-status">
         <span class="seat-badge">${user.seated ? `Seat ${user.seatIndexLabel || ""}` : "Standing"}</span>
-        <span class="voice-badge">${user.inVoice ? (user.muted ? "🔇" : "🎙") : ""}</span>
+        <span class="voice-badge">${user.inVoice ? (user.muted ? "" : "") : ""}</span>
       </div>
     `;
 
@@ -3171,21 +3171,21 @@ function updateLocalVoiceUI() {
 
   if (!App.inVoice) {
     ui.micButton.classList.remove("active", "muted");
-    if (ui.micIcon) ui.micIcon.textContent = "🎙";
+    if (ui.micIcon) ui.micIcon.textContent = "";
     if (ui.micLabel) ui.micLabel.textContent = "Join voice";
     if (ui.voiceStatus) ui.voiceStatus.textContent = "Microphone off";
     if (ui.leaveVoiceButton) ui.leaveVoiceButton.hidden = true;
   } else if (App.isMuted) {
     ui.micButton.classList.remove("active");
     ui.micButton.classList.add("muted");
-    if (ui.micIcon) ui.micIcon.textContent = "🔇";
+    if (ui.micIcon) ui.micIcon.textContent = "";
     if (ui.micLabel) ui.micLabel.textContent = "Unmute";
     if (ui.voiceStatus) ui.voiceStatus.textContent = "Microphone muted";
     if (ui.leaveVoiceButton) ui.leaveVoiceButton.hidden = false;
   } else {
     ui.micButton.classList.add("active");
     ui.micButton.classList.remove("muted");
-    if (ui.micIcon) ui.micIcon.textContent = "🎙";
+    if (ui.micIcon) ui.micIcon.textContent = "";
     if (ui.micLabel) ui.micLabel.textContent = "Mute";
     if (ui.voiceStatus) ui.voiceStatus.textContent = "Microphone live";
     if (ui.leaveVoiceButton) ui.leaveVoiceButton.hidden = false;

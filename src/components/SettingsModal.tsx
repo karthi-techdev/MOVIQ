@@ -1,6 +1,24 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import {
+  FiX,
+  FiFilm,
+  FiRadio,
+  FiHeadphones,
+  FiMaximize2,
+  FiTv,
+  FiCrop,
+  FiVideo
+} from "react-icons/fi";
+import {
+  FaYoutube,
+  FaVimeoV,
+  FaTwitch,
+  FaGoogleDrive,
+  FaDropbox
+} from "react-icons/fa6";
+import { HiBuildingLibrary } from "react-icons/hi2";
 import { parseVideoUrl, PRESET_MOVIES, PresetMovie } from "../lib/videoUtils";
 import { AudioSpatialMode, ScreenFrameMode } from "../types/cinema";
 
@@ -65,21 +83,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!url.trim()) return null;
     switch (parsedInfo.type) {
       case "youtube":
-        return <span style={{ background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>🔴 YouTube</span>;
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(239,68,68,0.2)", color: "#f87171", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+            <FaYoutube /> YouTube
+          </span>
+        );
       case "vimeo":
-        return <span style={{ background: "rgba(14,165,233,0.2)", color: "#38bdf8", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>🔵 Vimeo</span>;
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(14,165,233,0.2)", color: "#38bdf8", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+            <FaVimeoV /> Vimeo
+          </span>
+        );
       case "twitch":
-        return <span style={{ background: "rgba(168,85,247,0.2)", color: "#c084fc", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>🟣 Twitch</span>;
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(168,85,247,0.2)", color: "#c084fc", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+            <FaTwitch /> Twitch
+          </span>
+        );
       case "hls":
-        return <span style={{ background: "rgba(234,179,8,0.2)", color: "#facc15", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>⚡ HLS Stream</span>;
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(234,179,8,0.2)", color: "#facc15", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+            <FiRadio /> HLS Stream
+          </span>
+        );
       default:
         if (url.includes("drive.google.com")) {
-          return <span style={{ background: "rgba(34,197,94,0.2)", color: "#4ade80", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>📁 Google Drive</span>;
+          return (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(34,197,94,0.2)", color: "#4ade80", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+              <FaGoogleDrive /> Google Drive
+            </span>
+          );
         }
         if (url.includes("dropbox.com")) {
-          return <span style={{ background: "rgba(59,130,246,0.2)", color: "#60a5fa", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>📦 Dropbox</span>;
+          return (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(59,130,246,0.2)", color: "#60a5fa", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+              <FaDropbox /> Dropbox
+            </span>
+          );
         }
-        return <span style={{ background: "rgba(59,130,246,0.2)", color: "#60a5fa", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>🎬 Direct Video / CORS Proxy</span>;
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", background: "rgba(59,130,246,0.2)", color: "#60a5fa", padding: "2px 8px", borderRadius: "10px", fontSize: "10px", fontWeight: 600 }}>
+            <FiFilm /> Direct Video / CORS Proxy
+          </span>
+        );
     }
   };
 
@@ -97,7 +143,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             title="Close settings"
             onClick={onClose}
           >
-            ×
+            <FiX />
           </button>
         </div>
 
@@ -119,21 +165,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
             {[
-              { id: "stretch", label: "↔️ Stretch (Hide Black Bars)" },
-              { id: "stretch-max", label: "↔️ Stretch Max (Ultra Zoom)" },
-              { id: "fill", label: "📺 Fill Screen (100%)" },
-              { id: "fit", label: "📐 Auto Fit (Original)" },
-              { id: "16:9", label: "🎬 16:9 (Widescreen)" },
-              { id: "21:9", label: "🎥 21:9 (Ultrawide)" },
-              { id: "2.35:1", label: "🎞️ 2.35:1 (CinemaScope)" },
-              { id: "2.39:1", label: "🍿 2.39:1 (Theatrical)" },
-              { id: "4:3", label: "📺 4:3 (Classic)" }
+              { id: "stretch", icon: <FiMaximize2 style={{ marginRight: 4 }} />, label: "Stretch (Hide Bars)" },
+              { id: "stretch-max", icon: <FiMaximize2 style={{ marginRight: 4 }} />, label: "Stretch Max (Zoom)" },
+              { id: "fill", icon: <FiTv style={{ marginRight: 4 }} />, label: "Fill Screen (100%)" },
+              { id: "fit", icon: <FiCrop style={{ marginRight: 4 }} />, label: "Auto Fit (Original)" },
+              { id: "16:9", icon: <FiFilm style={{ marginRight: 4 }} />, label: "16:9 (Widescreen)" },
+              { id: "21:9", icon: <FiVideo style={{ marginRight: 4 }} />, label: "21:9 (Ultrawide)" },
+              { id: "2.35:1", icon: <FiFilm style={{ marginRight: 4 }} />, label: "2.35:1 (CinemaScope)" },
+              { id: "2.39:1", icon: <FiFilm style={{ marginRight: 4 }} />, label: "2.39:1 (Theatrical)" },
+              { id: "4:3", icon: <FiTv style={{ marginRight: 4 }} />, label: "4:3 (Classic)" }
             ].map((f) => (
               <button
                 key={f.id}
                 type="button"
                 className="button button-secondary"
                 style={{
+                  display: "inline-flex",
+                  alignItems: "center",
                   fontSize: "10px",
                   padding: "4px 8px",
                   minHeight: "auto",
@@ -150,7 +198,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }
                 }}
               >
-                {f.label}
+                {f.icon} {f.label}
               </button>
             ))}
           </div>
@@ -168,15 +216,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
             {[
-              { id: "atmos", label: "🎧 Dolby Atmos 3D", desc: "HRTF + Subwoofer + Height + Wall Echoes" },
-              { id: "hall", label: "🏛️ Multiplex Echo Hall", desc: "High Auditorium Echo & Grand Reverb" },
-              { id: "stereo", label: "🎧 Standard Stereo", desc: "Direct flat 2-channel stereo" }
+              { id: "atmos", icon: <FiHeadphones style={{ marginRight: 5 }} />, label: "Dolby Atmos 3D", desc: "HRTF + Subwoofer + Height + Wall Echoes" },
+              { id: "hall", icon: <HiBuildingLibrary style={{ marginRight: 5 }} />, label: "Multiplex Echo Hall", desc: "High Auditorium Echo & Grand Reverb" },
+              { id: "stereo", icon: <FiHeadphones style={{ marginRight: 5 }} />, label: "Standard Stereo", desc: "Direct flat 2-channel stereo" }
             ].map((a) => (
               <button
                 key={a.id}
                 type="button"
                 className="button button-secondary"
                 style={{
+                  display: "inline-flex",
+                  alignItems: "center",
                   fontSize: "10px",
                   padding: "5px 10px",
                   minHeight: "auto",
@@ -193,7 +243,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }
                 }}
               >
-                {a.label}
+                {a.icon} {a.label}
               </button>
             ))}
           </div>

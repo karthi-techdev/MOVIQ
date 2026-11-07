@@ -1215,32 +1215,39 @@ kbd {
 @media (max-width: 760px) {
   .lobby {
     display: block;
-    padding: 24px;
+    padding: 18px;
   }
 
   .lobby-hero {
-    margin: 20px 0 45px;
+    margin: 15px 0 35px;
   }
 
   .hero-copy {
-    margin-top: 65px;
+    margin-top: 40px;
   }
 
   .hero-copy h1 {
-    font-size: 54px;
+    font-size: clamp(38px, 10vw, 54px);
   }
 
   .lobby-card {
     max-height: none;
+    padding: 20px 16px;
+  }
+
+  .text-input {
+    font-size: 16px; /* Prevents auto-zoom on iOS Safari */
   }
 
   .top-bar {
-    right: 10px;
-    left: 10px;
+    right: 8px;
+    left: 8px;
+    top: 8px;
+    padding: 6px 8px;
   }
 
   .theatre-identity {
-    padding-left: 8px;
+    padding-left: 6px;
   }
 
   .theatre-identity strong,
@@ -1249,24 +1256,46 @@ kbd {
     display: none;
   }
 
+  .emotes-group {
+    display: flex;
+    overflow-x: auto;
+    max-width: 125px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    gap: 3px;
+  }
+
+  .emotes-group::-webkit-scrollbar {
+    display: none;
+  }
+
+  .emote-btn {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+  }
+
   .chat-panel {
-    top: 86px;
-    right: 10px;
-    bottom: 150px;
-    width: min(330px, calc(100vw - 20px));
+    top: 64px;
+    right: 8px;
+    bottom: 95px;
+    width: min(340px, calc(100vw - 16px));
+    z-index: 40;
   }
 
   .bottom-controls {
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
-    grid-template-columns: auto 1fr;
-    gap: 10px;
-    padding: 9px;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    min-height: auto;
+    border-radius: 14px;
   }
 
   .control-text,
-  .voice-controls .icon-button,
   .volume-icon,
   .volume-input,
   .now-playing-label {
@@ -1274,12 +1303,80 @@ kbd {
   }
 
   .voice-controls {
-    padding-right: 9px;
+    width: 100%;
+    justify-content: space-between;
+    padding-right: 0;
+    border-right: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 6px;
+  }
+
+  .movie-controls {
+    width: 100%;
+  }
+
+  .movie-title-row {
+    margin-bottom: 4px;
+  }
+
+  .playback-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .progress-input {
+    flex: 1 1 100%;
+    order: 1;
+    margin: 4px 0;
+  }
+
+  #movie-current-time {
+    order: 2;
+  }
+
+  #movie-duration {
+    order: 3;
+    margin-right: auto;
+  }
+
+  #movie-play-button {
+    order: 0;
   }
 
   .hint-bar,
   .seat-panel {
     display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .emotes-group {
+    display: none;
+  }
+
+  .hero-description {
+    font-size: 14px;
+  }
+
+  .brand span:not(.brand-mark) {
+    display: none;
+  }
+
+  .room-code {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+
+  .view-toggle-button {
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+
+  .icon-button {
+    width: 32px;
+    height: 32px;
   }
 }
 
@@ -1366,5 +1463,145 @@ kbd {
 
 .clap-button:active {
   transform: scale(1.25);
+}
+
+/* Emotes group in HUD */
+.emotes-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Mobile Touch Controls Layer (Virtual D-Pad & Action Buttons) */
+.mobile-touch-controls {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 15;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 16px 120px 16px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (min-width: 901px) {
+  .mobile-touch-controls {
+    display: none !important;
+  }
+}
+
+/* Virtual D-Pad */
+.virtual-dpad {
+  pointer-events: auto;
+  position: relative;
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  background: rgba(14, 16, 26, 0.72);
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px;
+  touch-action: none;
+}
+
+.dpad-middle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.dpad-center-nub {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(145, 120, 255, 0.25);
+  border: 1px solid rgba(145, 120, 255, 0.4);
+}
+
+.dpad-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  touch-action: none;
+}
+
+.dpad-btn:active {
+  background: rgba(145, 120, 255, 0.5);
+  color: #ffffff;
+  transform: scale(0.92);
+}
+
+/* Virtual Actions */
+.virtual-actions {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  touch-action: none;
+}
+
+.action-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(14, 16, 26, 0.75);
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: #f1f5f9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  touch-action: none;
+}
+
+.action-btn:active {
+  transform: scale(0.92);
+}
+
+.action-btn.active {
+  background: rgba(145, 120, 255, 0.35);
+  border-color: rgba(145, 120, 255, 0.8);
+  color: #fff;
+  box-shadow: 0 0 16px rgba(145, 120, 255, 0.4);
+}
+
+.jump-btn {
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(59, 130, 246, 0.15));
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.jump-btn:active {
+  background: rgba(56, 189, 248, 0.5);
+}
+
+.sit-stand-btn {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.25), rgba(245, 158, 11, 0.15));
+  border-color: rgba(234, 179, 8, 0.4);
 }
 

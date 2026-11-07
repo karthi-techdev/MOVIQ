@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { FiX, FiVolume2, FiMic, FiMicOff } from "react-icons/fi";
+import { FaUser } from "react-icons/fa6";
 import { ChatMessage, UserData } from "../types/cinema";
 import { CHARACTER_PRESETS } from "../lib/constants";
 
@@ -68,7 +70,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           aria-label="Close chat"
           onClick={onClose}
         >
-          ×
+          <FiX />
         </button>
       </div>
 
@@ -118,7 +120,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
               return (
                 <div key={u.id} className="people-item">
-                  <span className="people-avatar">{preset.icon}</span>
+                  <span className="people-avatar">
+                    <FaUser style={{ fontSize: "12px" }} />
+                  </span>
                   <div className="people-info">
                     <span className="people-name">
                       {u.username} {isSelf && "(You)"}
@@ -128,10 +132,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     </span>
                   </div>
                   <div className="people-status-icons">
-                    {u.speaking && <span className="mic-badge speaking" title="Speaking">🗣️</span>}
+                    {u.speaking && (
+                      <span className="mic-badge speaking" title="Speaking">
+                        <FiVolume2 />
+                      </span>
+                    )}
                     {u.inVoice && !u.speaking && (
                       <span className="mic-badge" title={u.muted ? "Muted" : "Listening"}>
-                        {u.muted ? "🔇" : "🎙️"}
+                        {u.muted ? <FiMicOff /> : <FiMic />}
                       </span>
                     )}
                   </div>
