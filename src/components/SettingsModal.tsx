@@ -120,6 +120,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
             {[
               { id: "stretch", label: "↔️ Stretch (Hide Black Bars)" },
+              { id: "stretch-max", label: "↔️ Stretch Max (Ultra Zoom)" },
               { id: "fill", label: "📺 Fill Screen (100%)" },
               { id: "fit", label: "📐 Auto Fit (Original)" },
               { id: "16:9", label: "🎬 16:9 (Widescreen)" },

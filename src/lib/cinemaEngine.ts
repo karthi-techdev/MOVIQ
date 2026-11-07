@@ -381,7 +381,7 @@ export class CinemaEngine {
   private videoTexture: THREE.VideoTexture | null = null;
   public defaultScreenTexture: THREE.CanvasTexture | null = null;
   private videoAspect: number = 16 / 9;
-  private frameMode: ScreenFrameMode = "fill";
+  private frameMode: ScreenFrameMode = "stretch";
   private fitMode: "fit" | "fill" = "fill";
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
   private lastVideoTime: number = -1;
@@ -999,11 +999,57 @@ export class CinemaEngine {
     }
 
     if (this.frameMode === "stretch") {
-      // Intelligently stretch & zoom vertically to hide encoded letterbox black bars
-      // Standard scope (2.35:1 to 2.39:1 embedded in 16:9 container) uses ~74.4% of frame height
-      const letterboxCropFactor = 0.744;
-      const offsetY = (1.0 - letterboxCropFactor) / 2.0;
-      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, letterboxCropFactor);
+      // Zoom & stretch vertically to completely eliminate letterbox black bars
+      // Standard widescreen scope in 16:9 container has black bars of ~13-14% at top & bottom
+      const letterboxCropFactor = 0.71; // Safely crops 14.5% top & bottom to remove all black bars
+      const cropBar = (1.0 - letterboxCropFactor) / 2.0; // 0.145
+      const repeatY = 1.0 / letterboxCropFactor; // ~1.4085
+      const offsetY = -cropBar / letterboxCropFactor; // ~-0.2042
+      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
+      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
+      return;
+    }
+
+    if (this.frameMode === "stretch-max") {
+      // Extra zoom & stretch for ultra-widescreen films (2.55:1 or heavy letterboxing)
+      const letterboxCropFactor = 0.65; // Crops 17.5% top & bottom
+      const cropBar = (1.0 - letterboxCropFactor) / 2.0; // 0.175
+      const repeatY = 1.0 / letterboxCropFactor; // ~1.5385
+      const offsetY = -cropBar / letterboxCropFactor; // ~-0.2692
+      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
+      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
+      return;
+    }
+
+    if (this.frameMode === "2.39:1") {
+      // Theatrical Anamorphic scope (2.39:1) embedded in 16:9 container
+      const cropFactor = (16.0 / 9.0) / 2.39; // ~0.7438
+      const cropBar = (1.0 - cropFactor) / 2.0; // ~0.1281
+      const repeatY = 1.0 / cropFactor; // ~1.3444
+      const offsetY = -cropBar / cropFactor; // ~-0.1722
+      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
+      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
+      return;
+    }
+
+    if (this.frameMode === "2.35:1") {
+      // CinemaScope (2.35:1) embedded in 16:9 container
+      const cropFactor = (16.0 / 9.0) / 2.35; // ~0.7565
+      const cropBar = (1.0 - cropFactor) / 2.0; // ~0.1217
+      const repeatY = 1.0 / cropFactor; // ~1.3218
+      const offsetY = -cropBar / cropFactor; // ~-0.1609
+      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
+      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
+      return;
+    }
+
+    if (this.frameMode === "21:9") {
+      // Ultrawide (21:9 / 2.333:1) embedded in 16:9 container
+      const cropFactor = 16.0 / 21.0; // ~0.7619
+      const cropBar = (1.0 - cropFactor) / 2.0; // ~0.1190
+      const repeatY = 1.0 / cropFactor; // ~1.3125
+      const offsetY = -cropBar / cropFactor; // ~-0.1562
+      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
       return;
     }
@@ -1019,15 +1065,6 @@ export class CinemaEngine {
         break;
       case "16:9":
         targetAspect = 16 / 9; // ~1.7778
-        break;
-      case "21:9":
-        targetAspect = 21 / 9; // ~2.3333
-        break;
-      case "2.35:1":
-        targetAspect = 2.35;
-        break;
-      case "2.39:1":
-        targetAspect = 2.39;
         break;
       case "4:3":
         targetAspect = 4 / 3; // ~1.3333
@@ -1049,7 +1086,7 @@ export class CinemaEngine {
       repeatY = 1.0;
       offsetY = 0.0;
     } else {
-      // Wider than screen (e.g. 21:9, 2.35:1, 2.39:1) -> fit full width, letterbox vertically
+      // Wider than screen -> fit full width, letterbox vertically
       repeatX = 1.0;
       offsetX = 0.0;
       repeatY = screenAspect / targetAspect;

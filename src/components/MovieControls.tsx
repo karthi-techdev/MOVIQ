@@ -326,7 +326,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 }
               }}
             >
-              {frameMode === "stretch" ? "↔️ STRETCH ▾" : frameMode === "fill" ? "📺 FILL ▾" : frameMode === "fit" ? "📐 FIT ▾" : `📺 ${frameMode} ▾`}
+              {frameMode === "stretch" ? "↔️ STRETCH ▾" : frameMode === "stretch-max" ? "↔️ STRETCH+ ▾" : frameMode === "fill" ? "📺 FILL ▾" : frameMode === "fit" ? "📐 FIT ▾" : `📺 ${frameMode} ▾`}
             </button>
 
             {isFrameMenuOpen && onFrameModeChange && (
@@ -350,6 +350,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
               >
                 {[
                   { id: "stretch", label: "↔️ Stretch (Hide Black Bars)", desc: "Expands height to eliminate top & bottom bars" },
+                  { id: "stretch-max", label: "↔️ Stretch Max (Ultra Zoom)", desc: "Maximum vertical stretch for extra-wide letterbox" },
                   { id: "fill", label: "📺 Fill Screen", desc: "100% curved screen cover" },
                   { id: "fit", label: "📐 Fit Screen", desc: "Auto original aspect ratio" },
                   { id: "16:9", label: "🎬 16:9", desc: "Standard widescreen (1.78:1)" },
