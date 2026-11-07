@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Meet friends, take a seat, talk, and watch movies together in a multiplayer 3D cinema.">
+  <title>Virtual Cinema</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="scene-container" aria-label="Interactive 3D cinema"></div>
+
+  <!-- Lobby -->
+  <main id="lobby" class="lobby">
+    <div class="lobby-ambient lobby-ambient-one"></div>
+    <div class="lobby-ambient lobby-ambient-two"></div>
+
+    <section class="lobby-hero">
+      <div class="brand brand-large">
+        <span class="brand-mark">VC</span>
+        <span>VIRTUAL CINEMA</span>
+      </div>
+
+      <div class="hero-copy">
+        <p class="eyebrow">YOUR SHARED BIG SCREEN</p>
+        <h1>Better movies.<br><span>Together.</span></h1>
+        <p class="hero-description">
+          Enter a cinematic virtual auditorium, meet your audience,
+          take your favorite seat, and watch together in real time.
+        </p>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature">
+          <span class="feature-dot"></span>
+          Live multiplayer
+        </div>
+        <div class="feature">
+          <span class="feature-dot"></span>
+          Spatial-style presence
+        </div>
+        <div class="feature">
+          <span class="feature-dot"></span>
+          Voice &amp; chat
+        </div>
+      </div>
+    </section>
+
+    <section class="lobby-card glass-panel">
+      <div class="lobby-card-header">
+        <div>
+          <p class="eyebrow">WELCOME</p>
+          <h2>Enter the cinema</h2>
+        </div>
+        <span id="lobby-status" class="status-pill">Connecting</span>
+      </div>
+
+      <label class="field-label" for="username-input">Display name</label>
+      <input
+        id="username-input"
+        class="text-input"
+        type="text"
+        maxlength="18"
+        autocomplete="nickname"
+        placeholder="Your username"
+      >
+
+      <label class="field-label" style="margin-top: 14px;">Choose 3D Character</label>
+      <div id="character-picker" class="character-picker">
+        <button type="button" class="char-card active" data-char="character_406814">
+          <span class="char-icon">👩</span>
+          <span class="char-name">Female 1</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406815">
+          <span class="char-icon">👱‍♀️</span>
+          <span class="char-name">Female 2</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406816">
+          <span class="char-icon">🏃‍♀️</span>
+          <span class="char-name">Female 3</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406817">
+          <span class="char-icon">🧘‍♀️</span>
+          <span class="char-name">Female 4</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406825">
+          <span class="char-icon">💃</span>
+          <span class="char-name">Female 5</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406826">
+          <span class="char-icon">💁‍♀️</span>
+          <span class="char-name">Female 6</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406818">
+          <span class="char-icon">👨</span>
+          <span class="char-name">Male 1</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406819">
+          <span class="char-icon">🧑</span>
+          <span class="char-name">Male 2</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406820">
+          <span class="char-icon">🏃‍♂️</span>
+          <span class="char-name">Male 3</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406821">
+          <span class="char-icon">🚴‍♂️</span>
+          <span class="char-name">Male 4</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406822">
+          <span class="char-icon">🚶‍♂️</span>
+          <span class="char-name">Male 5</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406823">
+          <span class="char-icon">🕺</span>
+          <span class="char-name">Male 6</span>
+        </button>
+        <button type="button" class="char-card" data-char="character_406824">
+          <span class="char-icon">🤵</span>
+          <span class="char-name">Male 7</span>
+        </button>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <label class="field-label" for="theatre-name-input">Create a theatre</label>
+      <input
+        id="theatre-name-input"
+        class="text-input"
+        type="text"
+        maxlength="36"
+        value="Midnight Premiere"
+        placeholder="Theatre name"
+      >
+
+      <label class="checkbox-row">
+        <input id="public-theatre-input" type="checkbox" checked>
+        <span>List as a public theatre</span>
+      </label>
+
+      <button id="create-button" class="button button-primary button-full">
+        Create theatre
+      </button>
+
+      <div class="or-divider"><span>OR JOIN WITH A CODE</span></div>
+
+      <div class="join-row">
+        <input
+          id="room-id-input"
+          class="text-input"
+          type="text"
+          maxlength="8"
+          autocapitalize="characters"
+          placeholder="ROOM ID"
+        >
+        <button id="join-button" class="button button-secondary">Join</button>
+      </div>
+
+      <p id="lobby-error" class="form-error" role="alert"></p>
+
+      <div class="public-header">
+        <div>
+          <p class="eyebrow">NOW SHOWING</p>
+          <h3>Public theatres</h3>
+        </div>
+        <button id="refresh-rooms-button" class="icon-button" title="Refresh public theatres" aria-label="Refresh public theatres">↻</button>
+      </div>
+
+      <div id="public-room-list" class="public-room-list">
+        <div class="empty-state">Looking for public theatres…</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Cinema interface -->
+  <div id="cinema-ui" class="cinema-ui" hidden>
+    <header class="top-bar glass-panel auto-ui">
+      <div class="top-bar-left">
+        <div class="brand">
+          <span class="brand-mark">VC</span>
+          <span class="brand-word">VIRTUAL CINEMA</span>
+        </div>
+
+        <div class="theatre-identity">
+          <strong id="top-theatre-name">Theatre</strong>
+          <button id="copy-room-button" class="room-code" title="Copy room ID">
+            Room <span id="top-room-id">------</span> <span>⧉</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="top-bar-actions">
+        <span id="connection-status" class="status-pill connected">Connected</span>
+        <span class="user-count"><span class="live-dot"></span><span id="user-count">1</span> here</span>
+
+        <button id="clap-button" class="icon-button" title="Cheer / Clap! (Shortcut: C)" aria-label="Cheer">👏</button>
+        <button id="wave-button" class="icon-button" title="Wave! (Shortcut: G)" aria-label="Wave">👋</button>
+        <button id="laugh-button" class="icon-button" title="Laugh! (Shortcut: L)" aria-label="Laugh">😂</button>
+        <button id="talk-button" class="icon-button" title="Talk! (Shortcut: T)" aria-label="Talk">🗣️</button>
+        <button id="spin-button" class="icon-button" title="360° Spin! (Shortcut: R)" aria-label="Spin">🔄</button>
+        <button id="camera-mode-button" class="view-toggle-button" title="Switch FPP / TPP Camera (Shortcut: V)" aria-label="Toggle camera view">🎥 TPP</button>
+        <button id="chat-toggle-button" class="icon-button" title="Toggle chat" aria-label="Toggle chat">
+          💬<span id="unread-badge" class="notification-badge" hidden>0</span>
+        </button>
+        <button id="settings-button" class="icon-button" title="Theatre and movie settings" aria-label="Theatre and movie settings">⚙</button>
+        <button id="focus-button" class="icon-button" title="Toggle cinema focus mode" aria-label="Toggle cinema focus mode">⛶</button>
+        <button id="leave-button" class="button button-danger button-small">Leave</button>
+      </div>
+    </header>
+
+    <aside id="chat-panel" class="chat-panel glass-panel auto-ui">
+      <div class="chat-header">
+        <div class="tab-buttons">
+          <button id="chat-tab-button" class="tab-button active">Chat</button>
+          <button id="people-tab-button" class="tab-button">Audience</button>
+        </div>
+        <button id="close-chat-button" class="icon-button" title="Close chat" aria-label="Close chat">×</button>
+      </div>
+
+      <div id="chat-pane" class="chat-pane">
+        <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+        <div class="chat-compose">
+          <input
+            id="chat-input"
+            type="text"
+            maxlength="300"
+            placeholder="Message the theatre…"
+            autocomplete="off"
+          >
+          <button id="send-chat-button" class="button button-primary button-small">Send</button>
+        </div>
+      </div>
+
+      <div id="people-pane" class="people-pane" hidden>
+        <div id="people-list" class="people-list"></div>
+      </div>
+    </aside>
+
+    <div class="seat-panel glass-panel auto-ui">
+      <span class="seat-panel-label">YOUR SEAT</span>
+      <strong id="seat-status">Standing</strong>
+      <button id="stand-button" class="button button-secondary button-small" hidden>Stand up</button>
+    </div>
+
+    <div id="hint-bar" class="hint-bar glass-panel auto-ui">
+      <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span>
+      <span><kbd>Shift</kbd> Run</span>
+      <span><kbd>Z</kbd> Slouch</span>
+      <span><kbd>Space</kbd> Jump</span>
+      <span><kbd>C</kbd> Cheer</span>
+      <span><kbd>G</kbd> Wave</span>
+      <span><kbd>L</kbd> Laugh</span>
+      <span><kbd>T</kbd> Talk</span>
+      <span><kbd>R</kbd> 360° Spin</span>
+      <span><kbd>V</kbd> FPP/TPP</span>
+      <span>Click seat to sit</span>
+    </div>
+
+    <section class="bottom-controls glass-panel auto-ui">
+      <div class="voice-controls">
+        <button id="mic-button" class="round-control" title="Join voice chat" aria-label="Join voice chat">
+          <span id="mic-icon">🎙</span>
+        </button>
+        <div class="control-text">
+          <strong id="mic-label">Join voice</strong>
+          <span id="voice-status">Microphone off</span>
+        </div>
+        <button id="leave-voice-button" class="icon-button" title="Leave voice chat" aria-label="Leave voice chat" hidden>↩</button>
+      </div>
+
+      <div class="movie-controls">
+        <div class="movie-title-row">
+          <span class="now-playing-label">NOW SHOWING</span>
+          <strong id="current-movie-title">Loading theatre…</strong>
+          <span id="host-note" class="host-note"></span>
+        </div>
+
+        <div class="playback-row">
+          <button id="movie-play-button" class="round-control small" title="Play movie" aria-label="Play movie">▶</button>
+          <span id="movie-current-time" class="time-label">0:00</span>
+          <input id="movie-progress" class="range-input progress-input" type="range" min="0" max="1000" value="0" step="1">
+          <span id="movie-duration" class="time-label">0:00</span>
+          <span class="volume-icon">🔊</span>
+          <input id="movie-volume" class="range-input volume-input" type="range" min="0" max="1" value="0.8" step="0.01">
+          <button id="movie-settings-button" class="icon-button" title="Change movie" aria-label="Change movie">⋯</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Host movie settings -->
+  <div id="settings-modal" class="modal-backdrop" hidden>
+    <section class="settings-dialog glass-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">THEATRE CONTROL</p>
+          <h2 id="settings-title">Movie settings</h2>
+        </div>
+        <button id="close-settings-button" class="icon-button" title="Close settings" aria-label="Close settings">×</button>
+      </div>
+
+      <p id="host-settings-description" class="dialog-description">
+        Paste a direct browser-compatible video URL.
+      </p>
+
+      <label class="field-label" for="movie-title-input">Movie title</label>
+      <input id="movie-title-input" class="text-input" type="text" maxlength="100" placeholder="Movie title">
+
+      <label class="field-label" for="movie-url-input">Video URL</label>
+      <input id="movie-url-input" class="text-input" type="url" placeholder="https://example.com/movie.mp4">
+
+      <p class="field-help">
+        MP4 and WebM work best. The URL must permit cross-origin playback.
+        YouTube, Vimeo and streaming-page URLs are not direct video files.
+      </p>
+
+      <button id="load-movie-button" class="button button-primary button-full">Load movie for everyone</button>
+
+      <div class="section-divider"></div>
+
+      <label class="field-label" for="quality-select">Rendering quality</label>
+      <select id="quality-select" class="text-input">
+        <option value="balanced">Balanced</option>
+        <option value="high">High</option>
+        <option value="performance">Performance</option>
+      </select>
+
+      <p class="shortcut-help">
+        Shortcuts: WASD move · M mute · Esc close panels · Click a seat to sit
+      </p>
+    </section>
+  </div>
+
+  <!-- Autoplay recovery -->
+  <div id="playback-gate" class="playback-gate" hidden>
+    <div class="glass-panel playback-gate-card">
+      <span class="gate-icon">▶</span>
+      <h3>Ready for the movie?</h3>
+      <p>Your browser needs a click to enable video and audio playback.</p>
+      <button id="enable-playback-button" class="button button-primary">Enable movie playback</button>
+    </div>
+  </div>
+
+  <button id="reveal-ui-button" class="reveal-ui-button glass-panel" hidden>
+    Show cinema controls
+  </button>
+
+  <div id="seat-tooltip" class="seat-tooltip" hidden></div>
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <video
+    id="movie-video"
+    class="hidden-video"
+    playsinline
+    preload="auto"
+    crossorigin="anonymous"
+  ></video>
+
+  <div id="remote-audio-container" aria-hidden="true"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/utils/SkeletonUtils.js"></script>
+  <script src="./script.js" defer></script>
+</body>
+</html>

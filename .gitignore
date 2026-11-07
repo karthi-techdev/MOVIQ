@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS / Editor files
+.DS_Store
+*.pem
+.vscode/
+.idea/
+
+# Local media / video files (Do NOT push local videos to GitHub)
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+*.m4v
+public/assets/movies/*.mp4
+public/assets/movies/*.mkv
+public/assets/movies/*.webm
+public/assets/movies/cache/
+!public/assets/movies/.gitkeep
+
+# Temporary / scratch / test scripts
+scratch/
+test_*.js
+test_*.mp4
+test_*.mkv
+.system_generated/

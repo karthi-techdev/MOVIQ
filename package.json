@@ -1,0 +1,32 @@
+{
+  "name": "virtual-cinema",
+  "version": "1.0.0",
+  "description": "Multiplayer 3D virtual cinema with synchronized movies, text chat and WebRTC voice",
+  "main": "server.ts",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "next build",
+    "start": "tsx server.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.187.0",
+    "@types/ws": "^8.18.2",
+    "hls.js": "^1.7.4",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.187.0",
+    "tsx": "^4.23.15",
+    "ws": "^8.18.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

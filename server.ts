@@ -1,0 +1,1343 @@
+import http from "http";
+import https from "https";
+import fs from "fs";
+import path from "path";
+import { spawn } from "child_process";
+import { parse } from "url";
+import crypto from "crypto";
+import next from "next";
+import { WebSocketServer, WebSocket } from "ws";
+import { MovieState, RoomSummary, UserData, Vector3Like } from "./src/types/cinema";
+
+const dev = process.env.NODE_ENV !== "production";
+const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || "0.0.0.0";
+const MAX_MESSAGE_SIZE = 64 * 1024;
+const MAX_USERS_PER_ROOM = 1000;
+
+const DEFAULT_MOVIE: MovieState = {
+  url: "/assets/movies/big_buck_bunny.mp4",
+  title: "Big Buck Bunny — Cinema Premiere",
+  playing: false,
+  time: 0,
+  volume: 0.8,
+  updatedAt: Date.now()
+};
+
+const AVATAR_COLORS = [
+  0x8170e8, 0x4c8edc, 0xb369b8, 0x3f9b91, 0xb87758, 0x6b7ac9, 0xa45f6d
+];
+
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" }
+];
+
+interface ClientSession {
+  id: string;
+  socket: WebSocket;
+  username: string;
+  characterType: string;
+  headPitch: number;
+  headYaw: number;
+  action: string;
+  room: RoomSession | null;
+  avatarColor: number;
+  colorIndex: number;
+  isHost: boolean;
+  seated: boolean;
+  seatIndex: number | null;
+  speaking: boolean;
+  muted: boolean;
+  inVoice: boolean;
+  position: Vector3Like;
+  rotation: number;
+  joinedAt: number;
+  isAlive: boolean;
+}
+
+interface RoomSession {
+  id: string;
+  name: string;
+  public: boolean;
+  hostId: string;
+  users: Map<string, ClientSession>;
+  seats: Map<number, string>;
+  movie: MovieState;
+  createdAt: number;
+  maxUsers: number;
+}
+
+const rooms = new Map<string, RoomSession>();
+const clients = new Map<string, ClientSession>();
+
+function generateId(length = 12): string {
+  return crypto.randomBytes(Math.ceil(length / 2)).toString("hex").slice(0, length);
+}
+
+function makeRoomId(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result: string;
+  do {
+    result = Array.from({ length: 6 }, () =>
+      alphabet[Math.floor(Math.random() * alphabet.length)]
+    ).join("");
+  } while (rooms.has(result));
+  return result;
+}
+
+function cleanString(value: any, maxLength = 100): string {
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanUsername(value: any): string {
+  return cleanString(value, 24).replace(/[<>]/g, "").trim();
+}
+
+function validVideoURL(value: any): string | null {
+  const str = String(value ?? "").trim();
+  if (!str || str.length > 4096) return null;
+  if (str.startsWith("/") && !str.startsWith("//")) {
+    return str;
+  }
+  try {
+    const url = new URL(str);
+    return ["http:", "https:", "blob:"].includes(url.protocol) ? str : null;
+  } catch {
+    return null;
+  }
+}
+
+function send(clientOrSocket: ClientSession | WebSocket, message: any) {
+  const socket = (clientOrSocket as ClientSession).socket || (clientOrSocket as WebSocket);
+  if (socket?.readyState === WebSocket.OPEN) {
+    try {
+      socket.send(JSON.stringify(message));
+    } catch (error: any) {
+      console.error("Send failed:", error.message);
+    }
+  }
+}
+
+function broadcast(room: RoomSession, message: any, exceptId: string | null = null) {
+  if (!room) return;
+  const payload = JSON.stringify(message);
+  for (const user of room.users.values()) {
+    if (user.id === exceptId) continue;
+    if (user.socket && user.socket.readyState === WebSocket.OPEN) {
+      try {
+        user.socket.send(payload);
+      } catch (err: any) {
+        console.error("Broadcast failed:", err.message);
+      }
+    }
+  }
+}
+
+function serializeUser(user: ClientSession): UserData {
+  return {
+    id: user.id,
+    username: user.username,
+    characterType: user.characterType || "character_406814",
+    headPitch: user.headPitch || 0,
+    headYaw: user.headYaw || 0,
+    action: user.action || "idle",
+    position: user.position,
+    rotation: user.rotation,
+    seated: user.seated,
+    seatIndex: user.seatIndex,
+    seatIndexLabel: user.seatIndex === null ? null : user.seatIndex + 1,
+    speaking: user.speaking,
+    muted: user.muted,
+    inVoice: user.inVoice,
+    avatarColor: user.avatarColor,
+    colorIndex: user.colorIndex,
+    joinedAt: user.joinedAt
+  };
+}
+
+function movieState(room: RoomSession): MovieState {
+  return {
+    ...room.movie,
+    serverTime: Date.now()
+  };
+}
+
+function serializeRoom(room: RoomSession): RoomSummary {
+  return {
+    id: room.id,
+    name: room.name,
+    public: room.public,
+    users: room.users.size,
+    maxUsers: room.maxUsers,
+    playing: room.movie.playing,
+    movie: {
+      title: room.movie.title,
+      url: room.movie.url,
+      playing: room.movie.playing
+    },
+    createdAt: room.createdAt
+  };
+}
+
+function getPublicRooms(): RoomSummary[] {
+  return [...rooms.values()]
+    .filter((room) => room.public)
+    .map(serializeRoom);
+}
+
+function broadcastRoomList() {
+  const payload = JSON.stringify({
+    type: "room-list",
+    rooms: getPublicRooms()
+  });
+  for (const client of clients.values()) {
+    if (client.socket?.readyState === WebSocket.OPEN) {
+      client.socket.send(payload);
+    }
+  }
+}
+
+function createRoom(owner: ClientSession, data: { name?: string; isPublic?: boolean }): RoomSession {
+  const room: RoomSession = {
+    id: makeRoomId(),
+    name: cleanString(data.name, 60) || "Midnight Premiere",
+    public: data.isPublic !== false,
+    hostId: owner.id,
+    users: new Map(),
+    seats: new Map(),
+    movie: { ...DEFAULT_MOVIE, updatedAt: Date.now() },
+    createdAt: Date.now(),
+    maxUsers: MAX_USERS_PER_ROOM
+  };
+  rooms.set(room.id, room);
+  return room;
+}
+
+function joinRoom(client: ClientSession, room: RoomSession, username: string) {
+  leaveRoom(client, false);
+  if (room.users.size >= (room.maxUsers || MAX_USERS_PER_ROOM)) {
+    throw new Error("This theatre is full.");
+  }
+  client.username = cleanUsername(username) || client.username;
+  client.room = room;
+  client.colorIndex = room.users.size % AVATAR_COLORS.length;
+  client.avatarColor = AVATAR_COLORS[client.colorIndex];
+  room.users.set(client.id, client);
+
+  // Send joined confirmation with full room snapshot
+  send(client, {
+    type: "joined",
+    userId: client.id,
+    selfId: client.id,
+    room: {
+      id: room.id,
+      name: room.name,
+      hostId: room.hostId,
+      movie: room.movie,
+      users: [...room.users.values()].map(serializeUser),
+      seats: Object.fromEntries(room.seats)
+    },
+    movie: room.movie,
+    users: [...room.users.values()].map(serializeUser)
+  });
+
+  // Notify other audience members
+  broadcast(room, {
+    type: "user-joined",
+    user: serializeUser(client)
+  }, client.id);
+
+  broadcast(room, {
+    type: "chat",
+    id: generateId(),
+    system: true,
+    text: `${client.username} entered the theatre`,
+    timestamp: Date.now()
+  });
+
+  broadcastRoomList();
+}
+
+function leaveRoom(client: ClientSession, notify = true) {
+  const room = client.room;
+  if (!room) return;
+  const wasHost = room.hostId === client.id;
+  room.users.delete(client.id);
+
+  // Release seats
+  for (const [seatId, occupantId] of room.seats.entries()) {
+    if (occupantId === client.id) {
+      room.seats.delete(seatId);
+      broadcast(room, {
+        type: "seat-update",
+        seatId,
+        userId: null,
+        username: null
+      });
+    }
+  }
+
+  if (notify) {
+    broadcast(room, {
+      type: "user-left",
+      userId: client.id,
+      username: client.username
+    });
+    broadcast(room, {
+      type: "chat",
+      id: generateId(),
+      system: true,
+      text: `${client.username} left the theatre`,
+      timestamp: Date.now()
+    });
+  }
+
+  // Promote next host if host left
+  if (wasHost && room.users.size > 0) {
+    const nextHost = room.users.values().next().value;
+    if (nextHost) {
+      room.hostId = nextHost.id;
+      broadcast(room, {
+        type: "host-changed",
+        hostId: room.hostId,
+        username: nextHost.username
+      });
+      broadcast(room, {
+        type: "movie-state",
+        state: movieState(room)
+      });
+    }
+  }
+
+  if (room.users.size === 0) {
+    rooms.delete(room.id);
+  }
+
+  client.room = null;
+  client.seatIndex = null;
+  client.seated = false;
+  broadcastRoomList();
+}
+
+function handleDisconnect(client: ClientSession) {
+  leaveRoom(client, true);
+  clients.delete(client.id);
+}
+
+const CACHE_DIR = path.join(process.cwd(), "public", "assets", "movies", "cache");
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+function extractYouTubeId(url: string): string | null {
+  const str = String(url || "").trim();
+  const match = str.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  if (match && match[1]) return match[1];
+  if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
+  if (/^-[a-zA-Z0-9_-]{11}$/.test(str)) return str.slice(1);
+  return null;
+}
+
+function extractGoogleDriveId(url: string): string | null {
+  const str = String(url || "").trim();
+  const match = str.match(
+    /(?:(?:drive\.google|drive\.usercontent\.google)\.com\/(?:file\/d\/|open\?id=|uc\?id=|download\?id=)|id=)([a-zA-Z0-9_-]{20,})/i
+  );
+  if (match && match[1]) return match[1];
+  if (/^[a-zA-Z0-9_-]{25,45}$/.test(str) && !str.includes("/") && !str.includes(".")) return str;
+  return null;
+}
+
+function proxyRemoteMediaStream(
+  targetUrl: string,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  defaultContentType = "video/mp4"
+) {
+  let parsedTarget: URL;
+  try {
+    parsedTarget = new URL(targetUrl);
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Invalid target url");
+    return;
+  }
+
+  const clientHeaders: Record<string, string> = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "*/*"
+  };
+  if (req.headers.range) {
+    clientHeaders["Range"] = req.headers.range as string;
+  }
+
+  const transport = parsedTarget.protocol === "https:" ? https : http;
+  const proxyReq = transport.request(
+    targetUrl,
+    {
+      method: req.method || "GET",
+      headers: clientHeaders
+    },
+    (proxyRes) => {
+      if (
+        (proxyRes.statusCode === 301 || proxyRes.statusCode === 302 || proxyRes.statusCode === 303 || proxyRes.statusCode === 307) &&
+        proxyRes.headers.location
+      ) {
+        proxyReq.destroy();
+        proxyRemoteMediaStream(proxyRes.headers.location, req, res, defaultContentType);
+        return;
+      }
+
+      const statusCode = proxyRes.statusCode || 200;
+      const headers: Record<string, string | string[]> = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+        "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
+        "Accept-Ranges": "bytes"
+      };
+
+      if (proxyRes.headers["content-type"]) {
+        headers["Content-Type"] = proxyRes.headers["content-type"];
+      } else {
+        headers["Content-Type"] = defaultContentType;
+      }
+      if (proxyRes.headers["content-length"]) {
+        headers["Content-Length"] = proxyRes.headers["content-length"];
+      }
+      if (proxyRes.headers["content-range"]) {
+        headers["Content-Range"] = proxyRes.headers["content-range"];
+      }
+
+      res.writeHead(statusCode, headers);
+      proxyRes.pipe(res);
+    }
+  );
+
+  proxyReq.on("error", (err) => {
+    if (!res.headersSent) {
+      res.writeHead(502, { "Content-Type": "text/plain" });
+      res.end(`Proxy error: ${err.message}`);
+    }
+  });
+
+  req.on("close", () => {
+    proxyReq.destroy();
+  });
+
+  proxyReq.end();
+}
+
+function serveLocalMediaFile(req: http.IncomingMessage, res: http.ServerResponse, filePath: string, contentType = "video/mp4") {
+  try {
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+    res.setHeader("Accept-Ranges", "bytes");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      if (isNaN(start) || start >= fileSize || (parts[1] && end >= fileSize) || start > end) {
+        res.writeHead(416, {
+          "Content-Range": `bytes */${fileSize}`,
+          "Content-Type": "text/plain"
+        });
+        res.end("Requested range not satisfiable");
+        return;
+      }
+
+      const chunksize = end - start + 1;
+      const file = fs.createReadStream(filePath, { start, end });
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+        "Content-Length": chunksize,
+        "Content-Type": contentType
+      });
+      file.pipe(res);
+    } else {
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": contentType
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (err: any) {
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end(`File stream error: ${err.message}`);
+    }
+  }
+}
+
+interface CachedYtStream {
+  videoUrl: string;
+  audioUrl: string | null;
+  expiresAt: number;
+}
+const ytStreamCache = new Map<string, CachedYtStream>();
+
+function resolveYouTubeStreamUrls(videoId: string): Promise<CachedYtStream | null> {
+  const cached = ytStreamCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached);
+  }
+
+  return new Promise((resolve) => {
+    const ytUrlProcess = spawn("python", [
+      "-m", "yt_dlp",
+      "--js-runtimes", "node:node",
+      "--extractor-args", "youtube:player_client=android,web,tv,ios",
+      "-g",
+      "-f", "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[vcodec^=avc]+ba/b[vcodec^=avc][height<=1080]/b[height<=1080]/best",
+      "--",
+      `https://www.youtube.com/watch?v=${videoId}`
+    ]);
+
+    let stdoutData = "";
+    let stderrData = "";
+    ytUrlProcess.stdout.on("data", (chunk) => {
+      stdoutData += chunk.toString();
+    });
+    ytUrlProcess.stderr.on("data", (chunk) => {
+      stderrData += chunk.toString();
+    });
+
+    ytUrlProcess.on("close", (code) => {
+      if (code !== 0 || !stdoutData.trim()) {
+        console.error(`[YouTube Resolve] Error resolving ${videoId} (code ${code}):`, stderrData.slice(0, 300));
+        resolve(null);
+        return;
+      }
+
+      const lines = stdoutData.trim().split(/\r?\n/).filter((l) => l.startsWith("http"));
+      if (lines.length === 0) {
+        resolve(null);
+        return;
+      }
+
+      const result: CachedYtStream = {
+        videoUrl: lines[0],
+        audioUrl: lines.length > 1 ? lines[1] : null,
+        expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
+      };
+      ytStreamCache.set(videoId, result);
+      resolve(result);
+    });
+
+    ytUrlProcess.on("error", (err) => {
+      console.error("[YouTube Resolve] Spawn error:", err);
+      resolve(null);
+    });
+  });
+}
+
+async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {
+  let rawId = (parsedUrl.query?.id as string | undefined)?.trim() || "";
+  let videoId = extractYouTubeId(rawId);
+  if (!videoId) {
+    const idMatch = rawId.match(/([a-zA-Z0-9_-]{11})/);
+    videoId = idMatch ? idMatch[1] : null;
+  }
+  if (!videoId) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Invalid or missing YouTube video id");
+    return;
+  }
+
+  const startTime = Math.max(0, parseFloat((parsedUrl.query?.t || parsedUrl.query?.start || 0) as string) || 0);
+
+  console.log(`[YouTube Stream] Serving videoId: ${videoId}, startTime: ${startTime}`);
+
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+  }
+
+  const streamInfo = await resolveYouTubeStreamUrls(videoId);
+  if (!streamInfo) {
+    if (!res.headersSent) {
+      res.writeHead(502, { "Content-Type": "text/plain" });
+      res.end("Failed to resolve YouTube stream directly from link");
+    }
+    return;
+  }
+
+  // Pre-muxed format 18 (single combined MP4 stream with both video and audio):
+  // Proxy directly with Range headers! 0% CPU, no stalls, instant seeking!
+  if (!streamInfo.audioUrl && startTime === 0) {
+    proxyRemoteMediaStream(streamInfo.videoUrl, req, res, "video/mp4");
+    return;
+  }
+
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Accept-Ranges", "none");
+
+  const ffmpegArgs: string[] = [
+    "-reconnect", "1",
+    "-reconnect_streamed", "1",
+    "-reconnect_delay_max", "5"
+  ];
+
+  if (startTime > 0) {
+    ffmpegArgs.push("-ss", String(startTime));
+  }
+
+  ffmpegArgs.push(
+    "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
+    "-i", streamInfo.videoUrl
+  );
+
+  if (streamInfo.audioUrl) {
+    if (startTime > 0) {
+      ffmpegArgs.push("-ss", String(startTime));
+    }
+    ffmpegArgs.push(
+      "-reconnect", "1",
+      "-reconnect_streamed", "1",
+      "-reconnect_delay_max", "5",
+      "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
+      "-i", streamInfo.audioUrl,
+      "-c:v", "copy",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-ac", "2",
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+      "-f", "mp4",
+      "pipe:1"
+    );
+  } else {
+    ffmpegArgs.push(
+      "-c:v", "copy",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-ac", "2",
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+      "-f", "mp4",
+      "pipe:1"
+    );
+  }
+
+  const ffmpeg = spawn("ffmpeg", ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  ffmpeg.stdout.pipe(res);
+
+  ffmpeg.on("error", (err) => {
+    console.error("FFmpeg direct YouTube stream error:", err);
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Direct stream error");
+    }
+  });
+
+  req.on("close", () => {
+    try {
+      ffmpeg.kill("SIGKILL");
+    } catch {}
+  });
+}
+
+function handleMessage(client: ClientSession, raw: any) {
+  if (!raw) return;
+  const rawStr = typeof raw === "string" ? raw : raw.toString();
+  if (rawStr.length > MAX_MESSAGE_SIZE) return;
+
+  let message: any;
+  try {
+    message = JSON.parse(rawStr);
+  } catch {
+    return;
+  }
+
+  const room = client.room;
+  console.log("WS RECV:", message.type, "client:", client.id);
+  switch (message.type) {
+    case "create-room":
+    case "create": {
+      const name = cleanString(message.name || message.theatreName, 60);
+      const username = cleanUsername(message.username) || client.username;
+      client.username = username;
+      client.characterType = cleanString(message.characterType || "character_406814", 32);
+      const newRoom = createRoom(client, { name, isPublic: message.isPublic !== false });
+      joinRoom(client, newRoom, username);
+      break;
+    }
+
+    case "join-room":
+    case "join": {
+      const roomId = cleanString(message.roomId || message.room, 10).toUpperCase();
+      const targetRoom = rooms.get(roomId);
+      if (!targetRoom) {
+        send(client, { type: "error", message: `Theatre "${roomId}" not found.` });
+        return;
+      }
+      const username = cleanUsername(message.username) || client.username;
+      client.characterType = cleanString(message.characterType || "character_406814", 32);
+      try {
+        joinRoom(client, targetRoom, username);
+      } catch (err: any) {
+        send(client, { type: "error", message: err.message });
+      }
+      break;
+    }
+
+    case "list-rooms": {
+      send(client, {
+        type: "room-list",
+        rooms: getPublicRooms()
+      });
+      break;
+    }
+
+    case "leave": {
+      leaveRoom(client, true);
+      break;
+    }
+
+    case "move": {
+      if (!room || client.seated) return;
+      if (message.position) {
+        client.position = {
+          x: Number(message.position.x) || 0,
+          y: Number(message.position.y) || 0,
+          z: Number(message.position.z) || 0
+        };
+      }
+      if (typeof message.rotation === "number") {
+        client.rotation = message.rotation;
+      }
+      if (typeof message.headPitch === "number") {
+        client.headPitch = message.headPitch;
+      }
+      if (typeof message.headYaw === "number") {
+        client.headYaw = message.headYaw;
+      }
+      if (typeof message.action === "string") {
+        client.action = cleanString(message.action, 24);
+      }
+      broadcast(room, {
+        type: "user-moved",
+        userId: client.id,
+        position: client.position,
+        rotation: client.rotation,
+        headPitch: client.headPitch,
+        headYaw: client.headYaw,
+        action: client.action
+      }, client.id);
+      break;
+    }
+
+    case "emote": {
+      if (!room) return;
+      const emote = cleanString(message.emote || message.action, 24) || "clap";
+      broadcast(room, {
+        type: "user-emote",
+        userId: client.id,
+        action: emote,
+        emote
+      }, client.id);
+      break;
+    }
+
+    case "take-seat":
+    case "sit": {
+      if (!room) return;
+      const seatIndex = Number(message.seat ?? message.seatIndex ?? message.seatId);
+      if (isNaN(seatIndex)) return;
+
+      const currentOccupant = room.seats.get(seatIndex);
+      if (currentOccupant && currentOccupant !== client.id) {
+        send(client, { type: "error", message: "Seat already taken." });
+        return;
+      }
+
+      if (client.seatIndex !== null) {
+        room.seats.delete(client.seatIndex);
+        broadcast(room, {
+          type: "seat-update",
+          seatId: client.seatIndex,
+          userId: null,
+          username: null
+        });
+      }
+
+      client.seated = true;
+      client.seatIndex = seatIndex;
+      room.seats.set(seatIndex, client.id);
+
+      broadcast(room, {
+        type: "seat-update",
+        seatId: seatIndex,
+        userId: client.id,
+        username: client.username
+      });
+      break;
+    }
+
+    case "stand": {
+      if (!room || !client.seated) return;
+      const prevSeat = client.seatIndex;
+      client.seated = false;
+      client.seatIndex = null;
+      if (prevSeat !== null) {
+        room.seats.delete(prevSeat);
+        broadcast(room, {
+          type: "seat-update",
+          seatId: prevSeat,
+          userId: null,
+          username: null
+        });
+      }
+      break;
+    }
+
+    case "chat": {
+      if (!room) return;
+      const text = cleanString(message.text, 300);
+      if (!text) return;
+      broadcast(room, {
+        type: "chat",
+        id: generateId(),
+        userId: client.id,
+        username: client.username,
+        text,
+        timestamp: Date.now()
+      });
+      break;
+    }
+
+    case "playback": {
+      if (!room || room.hostId !== client.id) return;
+      const action = message.action;
+      const movie = room.movie;
+      const now = Date.now();
+
+      if (message.url) {
+        const rawUrl = String(message.url).trim();
+        const ytId = extractYouTubeId(rawUrl);
+        if (ytId) {
+          const title = cleanString(message.title, 100) || "YouTube Video";
+          movie.url = `/api/youtube-stream?id=${ytId}`;
+          movie.title = title;
+          movie.time = 0;
+          movie.playing = false;
+          movie.updatedAt = now;
+          resolveYouTubeStreamUrls(ytId).catch(() => {});
+          broadcast(room, {
+            type: "movie-loaded",
+            movie: { ...movie }
+          });
+          broadcast(room, {
+            type: "chat",
+            id: generateId(),
+            system: true,
+            text: `🎬 Streaming "${title}" directly from YouTube link on curved cinema screen!`,
+            timestamp: Date.now()
+          });
+          return;
+        }
+
+        const gdriveId = extractGoogleDriveId(rawUrl);
+        if (gdriveId) {
+          const title = cleanString(message.title, 100) || "Google Drive Movie";
+          movie.url = `/api/gdrive-stream?id=${gdriveId}&eac3=1`;
+          movie.title = title;
+          movie.time = 0;
+          movie.playing = false;
+          movie.updatedAt = now;
+          const dlUrl = `https://drive.usercontent.google.com/download?id=${gdriveId}&export=download&confirm=t`;
+          startGdriveTranscodeJob(gdriveId, dlUrl);
+          broadcast(room, {
+            type: "movie-loaded",
+            movie: { ...movie }
+          });
+          broadcast(room, {
+            type: "chat",
+            id: generateId(),
+            system: true,
+            text: `🎬 Playing "${title}" from Google Drive with EAC3 Dolby audio support!`,
+            timestamp: Date.now()
+          });
+          return;
+        }
+
+        const url = validVideoURL(rawUrl);
+        if (!url) {
+          send(client, { type: "error", message: "Invalid video URL." });
+          return;
+        }
+        movie.url = url;
+        movie.title = cleanString(message.title, 100) || "Shared Movie";
+        movie.time = 0;
+        movie.playing = false;
+        movie.updatedAt = now;
+        broadcast(room, {
+          type: "movie-loaded",
+          movie: { ...movie }
+        });
+        return;
+      }
+
+      switch (action) {
+        case "play":
+          movie.playing = true;
+          movie.time = Math.max(0, Number(message.time) || 0);
+          break;
+        case "pause":
+          movie.playing = false;
+          movie.time = Math.max(0, Number(message.time) || movie.time);
+          break;
+        case "seek":
+          movie.time = Math.max(0, Number(message.time) || 0);
+          break;
+        case "volume":
+          movie.volume = Math.min(1, Math.max(0, Number(message.volume) || 0.8));
+          break;
+      }
+      movie.updatedAt = now;
+
+      broadcast(room, {
+        type: "movie-state",
+        state: movieState(room),
+        action,
+        by: client.username
+      });
+      break;
+    }
+
+    case "voice-join": {
+      if (!room) return;
+      client.inVoice = true;
+      const voicePeers = [...room.users.values()]
+        .filter((u) => u.id !== client.id && u.inVoice)
+        .map((u) => u.id);
+      send(client, { type: "voice-peers", peers: voicePeers });
+      broadcast(room, { type: "voice-peer-joined", userId: client.id }, client.id);
+      break;
+    }
+
+    case "voice-leave": {
+      if (!room) return;
+      client.inVoice = false;
+      client.speaking = false;
+      broadcast(room, { type: "voice-peer-left", userId: client.id }, client.id);
+      break;
+    }
+
+    case "webrtc-offer": {
+      if (!room) return;
+      const target = room.users.get(message.target);
+      if (target) {
+        send(target, {
+          type: "webrtc-offer",
+          from: client.id,
+          offer: message.offer || message.sdp
+        });
+      }
+      break;
+    }
+
+    case "webrtc-answer": {
+      if (!room) return;
+      const target = room.users.get(message.target);
+      if (target) {
+        send(target, {
+          type: "webrtc-answer",
+          from: client.id,
+          answer: message.answer || message.sdp
+        });
+      }
+      break;
+    }
+
+    case "webrtc-ice": {
+      if (!room) return;
+      const target = room.users.get(message.target);
+      if (target) {
+        send(target, {
+          type: "webrtc-ice",
+          from: client.id,
+          candidate: message.candidate
+        });
+      }
+      break;
+    }
+
+    case "speaking": {
+      if (!room) return;
+      client.speaking = Boolean(message.speaking);
+      broadcast(room, {
+        type: "voice-state",
+        userId: client.id,
+        speaking: client.speaking
+      });
+      break;
+    }
+
+    case "voice-state": {
+      if (!room) return;
+      if (typeof message.muted === "boolean") client.muted = message.muted;
+      if (typeof message.speaking === "boolean") client.speaking = message.speaking;
+      broadcast(room, {
+        type: "voice-state",
+        userId: client.id,
+        muted: client.muted,
+        speaking: client.speaking
+      });
+      break;
+    }
+
+    case "heartbeat": {
+      send(client, { type: "pong", time: Date.now() });
+      break;
+    }
+  }
+}
+
+function handleConnection(socket: WebSocket) {
+  const client: ClientSession = {
+    id: generateId(),
+    socket,
+    username: `Guest${Math.floor(Math.random() * 9000 + 1000)}`,
+    characterType: "character_406814",
+    headPitch: 0,
+    headYaw: 0,
+    action: "idle",
+    room: null,
+    avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+    colorIndex: 0,
+    isHost: false,
+    seated: false,
+    seatIndex: null,
+    speaking: false,
+    muted: true,
+    inVoice: false,
+    position: { x: -7.7, y: 0.55, z: -3.5 },
+    rotation: 0,
+    joinedAt: Date.now(),
+    isAlive: true
+  };
+  clients.set(client.id, client);
+
+  (socket as any).isAlive = true;
+  socket.on("pong", () => {
+    (socket as any).isAlive = true;
+  });
+
+  socket.on("message", (raw) => handleMessage(client, raw));
+  socket.on("close", () => handleDisconnect(client));
+  socket.on("error", (error) => {
+    console.error(`Client error (${client.id}):`, error.message);
+    handleDisconnect(client);
+  });
+
+  send(client, {
+    type: "connected",
+    userId: client.id,
+    rooms: getPublicRooms(),
+    config: { iceServers: ICE_SERVERS }
+  });
+}
+
+interface TranscodeJob {
+  fileId: string;
+  cachePath: string;
+  tempPath: string;
+  isComplete: boolean;
+  process?: any;
+  error?: string;
+}
+
+const activeTranscodeJobs = new Map<string, TranscodeJob>();
+
+function startGdriveTranscodeJob(fileId: string, rawUrl: string): TranscodeJob {
+  const cachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
+  const tempPath = path.join(CACHE_DIR, `gdrive-${fileId}.tmp.mp4`);
+
+  if (fs.existsSync(cachePath)) {
+    const existingJob = activeTranscodeJobs.get(fileId);
+    if (existingJob?.isComplete) {
+      return existingJob;
+    }
+    const job: TranscodeJob = { fileId, cachePath, tempPath, isComplete: true };
+    activeTranscodeJobs.set(fileId, job);
+    return job;
+  }
+
+  const existingJob = activeTranscodeJobs.get(fileId);
+  if (existingJob && !existingJob.error && existingJob.process) {
+    return existingJob;
+  }
+
+  try {
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+  } catch {}
+
+  const ffmpegArgs = [
+    "-y",
+    "-reconnect", "1",
+    "-reconnect_streamed", "1",
+    "-reconnect_delay_max", "5",
+    "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
+    "-i", rawUrl,
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-b:a", "256k",
+    "-ac", "2",
+    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+    "-f", "mp4",
+    tempPath
+  ];
+
+  console.log(`[GDrive Transcode] Starting background transcode for ${fileId}...`);
+  const child = spawn("ffmpeg", ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+
+  const job: TranscodeJob = {
+    fileId,
+    cachePath,
+    tempPath,
+    isComplete: false,
+    process: child
+  };
+  activeTranscodeJobs.set(fileId, job);
+
+  child.on("close", (code) => {
+    if (code === 0 && fs.existsSync(tempPath)) {
+      try {
+        fs.renameSync(tempPath, cachePath);
+        job.isComplete = true;
+        job.process = undefined;
+        console.log(`[GDrive Transcode] Completed transcode for ${fileId}! Cached to ${cachePath}`);
+      } catch (err: any) {
+        console.error(`[GDrive Transcode] Rename error for ${fileId}:`, err.message);
+      }
+    } else {
+      job.error = `FFmpeg exited with code ${code}`;
+      console.error(`[GDrive Transcode] Failed for ${fileId}: ${job.error}`);
+    }
+  });
+
+  child.on("error", (err) => {
+    job.error = err.message;
+    console.error(`[GDrive Transcode] Process error for ${fileId}:`, err);
+  });
+
+  return job;
+}
+
+function serveRangeFromFile(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  filePath: string,
+  isComplete: boolean
+) {
+  try {
+    const stat = fs.statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+    res.setHeader("Accept-Ranges", "bytes");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      if (isNaN(start) || start >= fileSize) {
+        res.writeHead(416, {
+          "Content-Range": isComplete ? `bytes */${fileSize}` : `bytes */*`,
+          "Content-Type": "text/plain"
+        });
+        res.end("Requested range not satisfiable");
+        return;
+      }
+
+      if (end >= fileSize) {
+        end = fileSize - 1;
+      }
+
+      const chunkSize = end - start + 1;
+      const fileStream = fs.createReadStream(filePath, { start, end });
+      res.writeHead(206, {
+        "Content-Range": isComplete ? `bytes ${start}-${end}/${fileSize}` : `bytes ${start}-${end}/*`,
+        "Content-Length": chunkSize,
+        "Content-Type": "video/mp4"
+      });
+      fileStream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        "Content-Length": fileSize,
+        "Content-Type": "video/mp4"
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  } catch (err: any) {
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end(`File stream error: ${err.message}`);
+    }
+  }
+}
+
+function handleVideoProxy(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {
+  const targetUrl = parsedUrl.query?.url;
+  if (!targetUrl || typeof targetUrl !== "string") {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Missing url parameter");
+    return;
+  }
+
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  proxyRemoteMediaStream(targetUrl, req, res, "video/mp4");
+}
+
+async function handleGdriveOrTranscodeStream(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {
+  let fileId = parsedUrl.query?.id as string | undefined;
+  const inputUrl = parsedUrl.query?.url as string | undefined;
+
+  if (!fileId && inputUrl) {
+    fileId = extractGoogleDriveId(inputUrl) || undefined;
+  }
+
+  if (fileId) {
+    const rawUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
+    const job = startGdriveTranscodeJob(fileId, rawUrl);
+
+    // Wait until at least 64KB is written to tempPath or cachePath exists
+    const checkReady = () => {
+      if (fs.existsSync(job.cachePath)) return { ready: true, path: job.cachePath, complete: true };
+      if (fs.existsSync(job.tempPath)) {
+        try {
+          const sz = fs.statSync(job.tempPath).size;
+          if (sz > 65536) return { ready: true, path: job.tempPath, complete: false };
+        } catch {}
+      }
+      return { ready: false, path: "", complete: false };
+    };
+
+    let status = checkReady();
+    if (!status.ready) {
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        status = checkReady();
+        if (status.ready || job.error) break;
+      }
+    }
+
+    if (status.ready) {
+      serveRangeFromFile(req, res, status.path, status.complete);
+      return;
+    }
+  }
+
+  const fallbackUrl = inputUrl || (fileId ? `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t` : undefined);
+  if (!fallbackUrl) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Missing url or Google Drive id");
+    return;
+  }
+
+  proxyRemoteMediaStream(fallbackUrl, req, res, "video/mp4");
+}
+
+// Next.js App Initialization
+const app = next({ dev, dir: process.cwd() });
+const handle = app.getRequestHandler();
+
+app.prepare().then(() => {
+  const server = http.createServer((req, res) => {
+    const parsedUrl = parse(req.url!, true);
+    if (parsedUrl.pathname === "/api/video-proxy") {
+      handleVideoProxy(req, res, parsedUrl);
+      return;
+    }
+    if (parsedUrl.pathname === "/api/gdrive-stream" || parsedUrl.pathname === "/api/eac3-stream") {
+      handleGdriveOrTranscodeStream(req, res, parsedUrl);
+      return;
+    }
+    if (parsedUrl.pathname === "/api/youtube-stream") {
+      handleYouTubeStream(req, res, parsedUrl);
+      return;
+    }
+    if (parsedUrl.pathname && parsedUrl.pathname.startsWith("/assets/movies/cache/")) {
+      const fileName = path.basename(parsedUrl.pathname);
+      const targetFilePath = path.join(CACHE_DIR, fileName);
+      if (fs.existsSync(targetFilePath)) {
+        serveLocalMediaFile(req, res, targetFilePath, "video/mp4");
+        return;
+      }
+    }
+    handle(req, res, parsedUrl);
+  });
+
+  const wss = new WebSocketServer({ noServer: true });
+  wss.on("connection", handleConnection);
+
+  server.on("upgrade", (req, socket, head) => {
+    const { pathname } = parse(req.url || "", true);
+    if (pathname && pathname.startsWith("/_next/")) {
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  });
+
+  const heartbeatInterval = setInterval(() => {
+    wss.clients.forEach((socket: any) => {
+      if (socket.isAlive === false) return socket.terminate();
+      socket.isAlive = false;
+      socket.ping();
+    });
+  }, 30000);
+
+  server.listen(PORT, HOST, () => {
+    console.log(`> Virtual Cinema Next.js server ready at http://localhost:${PORT}`);
+  });
+
+  process.on("SIGINT", () => {
+    clearInterval(heartbeatInterval);
+    wss.close();
+    server.close(() => process.exit(0));
+  });
+});
