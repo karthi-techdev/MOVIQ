@@ -124,7 +124,7 @@ export const Lobby: React.FC<LobbyProps> = ({
             color: "#fca5a5",
             lineHeight: "1.45"
           }}>
-            <strong>WebSocket Disconnected:</strong> Vercel serverless functions do not host persistent WebSockets. Set <code>NEXT_PUBLIC_WS_URL</code> in Vercel settings or deploy the full app on Render / Railway.
+            <strong>WebSocket Disconnected:</strong> Vercel serverless functions do not host persistent WebSockets. Set <code>NEXT_PUBLIC_WS_URL</code> in Vercel settings or deploy the full app on Render.
           </div>
         )}
 
