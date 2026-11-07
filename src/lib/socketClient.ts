@@ -14,6 +14,13 @@ export class SocketClient {
       if (process.env.NEXT_PUBLIC_WS_URL) {
         return process.env.NEXT_PUBLIC_WS_URL;
       }
+      const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_API_URL;
+      if (serverUrl) {
+        const clean = serverUrl.replace(/\/$/, "");
+        const wsProtocol = clean.startsWith("https:") ? "wss:" : "ws:";
+        const host = clean.replace(/^https?:\/\//, "");
+        return `${wsProtocol}//${host}/ws`;
+      }
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       return `${protocol}//${window.location.host}/ws`;
     }

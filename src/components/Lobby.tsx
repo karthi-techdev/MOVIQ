@@ -113,6 +113,21 @@ export const Lobby: React.FC<LobbyProps> = ({
           </span>
         </div>
 
+        {status === "Disconnected" && (
+          <div style={{
+            background: "rgba(239, 68, 68, 0.12)",
+            border: "1px solid rgba(239, 68, 68, 0.3)",
+            borderRadius: "10px",
+            padding: "8px 12px",
+            marginBottom: "14px",
+            fontSize: "11px",
+            color: "#fca5a5",
+            lineHeight: "1.45"
+          }}>
+            <strong>WebSocket Disconnected:</strong> Vercel serverless functions do not host persistent WebSockets. Set <code>NEXT_PUBLIC_WS_URL</code> in Vercel settings or deploy the full app on Render / Railway.
+          </div>
+        )}
+
         <label className="field-label" htmlFor="username-input">Display name</label>
         <input
           id="username-input"

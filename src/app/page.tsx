@@ -124,7 +124,11 @@ function CinemaApp() {
 
     let targetUrl = mediaUrl.trim();
 
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+    const apiBase = (process.env.NEXT_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+
+    if (targetUrl.startsWith("/api/") && apiBase) {
+      targetUrl = `${apiBase}${targetUrl}`;
+    }
 
     // 1. YouTube links -> high-FPS cinema stream
     const ytMatch = targetUrl.match(
