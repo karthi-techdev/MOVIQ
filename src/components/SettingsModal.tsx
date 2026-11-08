@@ -46,7 +46,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentTitle,
   currentUrl,
   fitMode = "fit",
-  frameMode = "fit",
+  frameMode = "2.35:1",
   spatialAudioEnabled = true,
   spatialAudioMode = "atmos",
   onLoadMovie,
@@ -165,12 +165,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
             {[
+              { id: "2.35:1", icon: <FiFilm style={{ marginRight: 4 }} />, label: "2.35:1 (Default)" },
               { id: "stretch", icon: <FiMaximize2 style={{ marginRight: 4 }} />, label: "Stretch (Hide Black Bars)" },
               { id: "fill", icon: <FiTv style={{ marginRight: 4 }} />, label: "Fill Screen" },
-              { id: "fit", icon: <FiCrop style={{ marginRight: 4 }} />, label: "Fit Screen (Default)" },
+              { id: "fit", icon: <FiCrop style={{ marginRight: 4 }} />, label: "Auto Fit (Original)" },
               { id: "16:9", icon: <FiFilm style={{ marginRight: 4 }} />, label: "16:9 (Widescreen)" },
               { id: "21:9", icon: <FiVideo style={{ marginRight: 4 }} />, label: "21:9 (Ultrawide)" },
-              { id: "2.35:1", icon: <FiFilm style={{ marginRight: 4 }} />, label: "2.35:1 (CinemaScope)" },
               { id: "2.39:1", icon: <FiFilm style={{ marginRight: 4 }} />, label: "2.39:1 (Theatrical)" }
             ].map((f) => (
               <button

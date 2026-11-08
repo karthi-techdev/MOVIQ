@@ -350,12 +350,12 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 fontSize: "10px",
                 fontWeight: 700,
                 letterSpacing: "0.04em",
-                color: frameMode === "fit" ? "#38bdf8" : "#cbd5e1",
-                borderColor: frameMode === "fit" ? "rgba(56,189,248,0.5)" : "rgba(255,255,255,0.14)",
-                background: frameMode === "fit" ? "rgba(56,189,248,0.14)" : "transparent",
-                boxShadow: frameMode === "fit" ? "0 0 10px rgba(56,189,248,0.25)" : "none"
+                color: frameMode === "2.35:1" ? "#38bdf8" : "#cbd5e1",
+                borderColor: frameMode === "2.35:1" ? "rgba(56,189,248,0.5)" : "rgba(255,255,255,0.14)",
+                background: frameMode === "2.35:1" ? "rgba(56,189,248,0.14)" : "transparent",
+                boxShadow: frameMode === "2.35:1" ? "0 0 10px rgba(56,189,248,0.25)" : "none"
               }}
-              title="Screen Aspect Ratio & Frame Options (Stretch, Fill, Fit, 16:9, etc.)"
+              title="Screen Aspect Ratio & Frame Options (2.35:1, Stretch, Fill, Fit, etc.)"
               aria-label="Select screen aspect ratio frame mode"
               onClick={() => {
                 if (onFrameModeChange) {
@@ -366,7 +366,8 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
               }}
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                {frameMode === "fit" ? <><FiCrop /> FIT</> :
+                {frameMode === "2.35:1" ? <><FiFilm /> 2.35:1</> :
+                 frameMode === "fit" ? <><FiCrop /> FIT</> :
                  frameMode === "stretch" ? <><FiMaximize2 /> STRETCH</> :
                  frameMode === "fill" ? <><FiTv /> FILL</> :
                  <><FiFilm /> {frameMode}</>}
@@ -394,12 +395,12 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 }}
               >
                 {[
+                  { id: "2.35:1", icon: <FiFilm style={{ marginRight: 6 }} />, title: "2.35:1 (Default)", desc: "CinemaScope widescreen" },
                   { id: "stretch", icon: <FiMaximize2 style={{ marginRight: 6 }} />, title: "Stretch (Hide Black Bars)", desc: "Expands height to eliminate top & bottom bars" },
                   { id: "fill", icon: <FiTv style={{ marginRight: 6 }} />, title: "Fill Screen", desc: "100% curved screen cover" },
-                  { id: "fit", icon: <FiCrop style={{ marginRight: 6 }} />, title: "Fit Screen (Default)", desc: "Auto original aspect ratio" },
+                  { id: "fit", icon: <FiCrop style={{ marginRight: 6 }} />, title: "Fit Screen", desc: "Auto original aspect ratio" },
                   { id: "16:9", icon: <FiFilm style={{ marginRight: 6 }} />, title: "16:9", desc: "Standard widescreen (1.78:1)" },
                   { id: "21:9", icon: <FiVideo style={{ marginRight: 6 }} />, title: "21:9", desc: "Cinema ultrawide (2.33:1)" },
-                  { id: "2.35:1", icon: <FiFilm style={{ marginRight: 6 }} />, title: "2.35:1", desc: "CinemaScope widescreen" },
                   { id: "2.39:1", icon: <FiFilm style={{ marginRight: 6 }} />, title: "2.39:1", desc: "Theatrical anamorphic" }
                 ].map((item) => (
                   <button

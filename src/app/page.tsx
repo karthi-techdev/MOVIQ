@@ -48,7 +48,7 @@ function CinemaApp() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isPlaybackGateOpen, setIsPlaybackGateOpen] = useState<boolean>(false);
   const [focusMode, setFocusMode] = useState<boolean>(false);
-  const [frameMode, setFrameMode] = useState<ScreenFrameMode>("fit");
+  const [frameMode, setFrameMode] = useState<ScreenFrameMode>("2.35:1");
   const [fitMode, setFitMode] = useState<"fit" | "fill">("fit");
   const [spatialAudioEnabled, setSpatialAudioEnabled] = useState<boolean>(true);
   const [spatialAudioMode, setSpatialAudioMode] = useState<AudioSpatialMode>("atmos");
@@ -638,7 +638,7 @@ function CinemaApp() {
   const handleToggleFitMode = () => {
     if (!engineRef.current) return;
     const current = engineRef.current.getFrameMode();
-    const next: ScreenFrameMode = current === "fit" ? "stretch" : current === "stretch" ? "fill" : "fit";
+    const next: ScreenFrameMode = current === "2.35:1" ? "stretch" : current === "stretch" ? "fill" : current === "fill" ? "fit" : "2.35:1";
     handleFrameModeChange(next);
   };
 
@@ -648,12 +648,12 @@ function CinemaApp() {
     setFrameMode(mode);
     setFitMode(mode === "fill" || mode === "stretch" ? "fill" : "fit");
     const labels: Record<ScreenFrameMode, string> = {
-      fit: "Fit Screen (Default)",
+      "2.35:1": "2.35:1 CinemaScope (Default)",
       stretch: "Stretch (Hide Black Bars)",
       fill: "Fill Screen (100% Curved)",
+      fit: "Fit Screen (Original)",
       "16:9": "16:9 Widescreen (1.78:1)",
       "21:9": "21:9 Ultrawide (2.33:1)",
-      "2.35:1": "2.35:1 CinemaScope",
       "2.39:1": "2.39:1 Theatrical Anamorphic"
     };
     showToast(`Screen Frame: ${labels[mode] || mode}`);

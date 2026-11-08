@@ -381,7 +381,7 @@ export class CinemaEngine {
   private videoTexture: THREE.VideoTexture | null = null;
   public defaultScreenTexture: THREE.CanvasTexture | null = null;
   private videoAspect: number = 16 / 9;
-  private frameMode: ScreenFrameMode = "fit";
+  private frameMode: ScreenFrameMode = "2.35:1";
   private fitMode: "fit" | "fill" = "fit";
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
   private lastVideoTime: number = -1;
@@ -939,6 +939,7 @@ export class CinemaEngine {
         }
       `,
       fragmentShader: `
+        #include <common>
         uniform sampler2D map;
         uniform vec2 uRepeat;
         uniform vec2 uOffset;
@@ -950,6 +951,7 @@ export class CinemaEngine {
           } else {
             gl_FragColor = texture2D(map, uv);
           }
+          #include <colorspace_fragment>
         }
       `
     });
@@ -2683,17 +2685,9 @@ export class CinemaEngine {
       }
     });
 
-    // Ultra-smooth native FPS video frame upload to GPU:
-    // When requestVideoFrameCallback is available, it handles uploads directly on each hardware frame.
-    // Otherwise fallback to checking if currentTime changed:
-    const hasRVFC = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
-    if (!hasRVFC) {
-      if (this.videoTexture && this.videoElement && !this.videoElement.paused && this.videoElement.readyState >= 2) {
-        if (this.videoElement.currentTime !== this.lastVideoTime) {
-          this.lastVideoTime = this.videoElement.currentTime;
-          this.videoTexture.needsUpdate = true;
-        }
-      }
+    // Ultra-smooth native 60fps/120fps video frame upload to GPU on every render frame
+    if (this.videoTexture && this.videoElement && !this.videoElement.paused && this.videoElement.readyState >= 2) {
+      this.videoTexture.needsUpdate = true;
     }
 
     this.spatialAudio.updateListener(this.camera);

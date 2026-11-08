@@ -1164,11 +1164,11 @@ kbd {
   position: fixed;
   top: 0;
   left: 0;
-  width: 640px;
-  height: 360px;
+  width: 1920px;
+  height: 1080px;
   z-index: -9999;
   pointer-events: none;
-  opacity: 1;
+  opacity: 0.01;
   transform: translateZ(0);
 }
 
