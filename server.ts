@@ -7,7 +7,7 @@ import { parse } from "url";
 import crypto from "crypto";
 import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
-import { MovieState, RoomSummary, UserData, Vector3Like } from "./src/types/cinema";
+import { LightingState, MovieState, RoomSummary, SideLightMode, UserData, Vector3Like } from "./src/types/cinema";
 
 const dev = process.env.NODE_ENV !== "production";
 const PORT = Number(process.env.PORT || 3000);
@@ -22,6 +22,13 @@ const DEFAULT_MOVIE: MovieState = {
   time: 0,
   volume: 0.8,
   updatedAt: Date.now()
+};
+
+const DEFAULT_LIGHTING: LightingState = {
+  ceiling: true,
+  stairs: true,
+  belowScreen: true,
+  sideLights: "on"
 };
 
 const AVATAR_COLORS = [
@@ -64,6 +71,7 @@ interface RoomSession {
   users: Map<string, ClientSession>;
   seats: Map<number, string>;
   movie: MovieState;
+  lighting: LightingState;
   createdAt: number;
   maxUsers: number;
 }
@@ -216,6 +224,7 @@ function createRoom(owner: ClientSession, data: { name?: string; isPublic?: bool
     users: new Map(),
     seats: new Map(),
     movie: { ...DEFAULT_MOVIE, updatedAt: Date.now() },
+    lighting: { ...DEFAULT_LIGHTING },
     createdAt: Date.now(),
     maxUsers: MAX_USERS_PER_ROOM
   };
@@ -234,6 +243,10 @@ function joinRoom(client: ClientSession, room: RoomSession, username: string) {
   client.avatarColor = AVATAR_COLORS[client.colorIndex];
   room.users.set(client.id, client);
 
+  if (!room.lighting) {
+    room.lighting = { ...DEFAULT_LIGHTING };
+  }
+
   // Send joined confirmation with full room snapshot
   send(client, {
     type: "joined",
@@ -244,9 +257,11 @@ function joinRoom(client: ClientSession, room: RoomSession, username: string) {
       name: room.name,
       hostId: room.hostId,
       movie: movieState(room),
+      lighting: room.lighting,
       users: [...room.users.values()].map(serializeUser),
       seats: Object.fromEntries(room.seats)
     },
+    lighting: room.lighting,
     movie: movieState(room),
     users: [...room.users.values()].map(serializeUser)
   });
@@ -500,19 +515,28 @@ interface CachedYtStream {
 }
 const ytStreamCache = new Map<string, CachedYtStream>();
 
-function resolveYouTubeStreamUrls(videoId: string): Promise<CachedYtStream | null> {
-  const cached = ytStreamCache.get(videoId);
+function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
+  const cacheKey = `${videoId}_${quality}`;
+  const cached = ytStreamCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return Promise.resolve(cached);
   }
 
+  let maxH = 1080;
+  if (quality === "720p") maxH = 720;
+  else if (quality === "480p") maxH = 480;
+  else if (quality === "360p") maxH = 360;
+
+  // Format selection prioritizing 1080p AVC1 (H.264) for maximum GPU decoding smoothness & 60fps/24fps source preservation
+  const formatString = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}][vcodec^=avc1]/b[height<=${maxH}]/best`;
+
   return new Promise((resolve) => {
     const ytUrlProcess = spawn("python", [
       "-m", "yt_dlp",
-      "--js-runtimes", "node:node",
-      "--extractor-args", "youtube:player_client=android,web,tv,ios",
+      "--no-playlist",
+      "--no-warnings",
       "-g",
-      "-f", "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[vcodec^=avc]+ba/b[vcodec^=avc][height<=1080]/b[height<=1080]/best",
+      "-f", formatString,
       "--",
       `https://www.youtube.com/watch?v=${videoId}`
     ]);
@@ -544,7 +568,7 @@ function resolveYouTubeStreamUrls(videoId: string): Promise<CachedYtStream | nul
         audioUrl: lines.length > 1 ? lines[1] : null,
         expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
       };
-      ytStreamCache.set(videoId, result);
+      ytStreamCache.set(cacheKey, result);
       resolve(result);
     });
 
@@ -568,9 +592,10 @@ async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerRe
     return;
   }
 
+  const quality = ((parsedUrl.query?.quality as string) || "1080p").toLowerCase();
   const startTime = Math.max(0, parseFloat((parsedUrl.query?.t || parsedUrl.query?.start || 0) as string) || 0);
 
-  console.log(`[YouTube Stream] Serving videoId: ${videoId}, startTime: ${startTime}`);
+  console.log(`[YouTube Stream] Serving videoId: ${videoId}, quality: ${quality}, startTime: ${startTime}`);
 
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -579,9 +604,22 @@ async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerRe
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
+    return;
   }
 
-  const streamInfo = await resolveYouTubeStreamUrls(videoId);
+  // Check if fully pre-transcoded / cached file is available on disk for instant local Range streaming
+  const diskCachePath = path.join(CACHE_DIR, `yt_${videoId}_${quality}.mp4`);
+  if (fs.existsSync(diskCachePath)) {
+    try {
+      const stat = fs.statSync(diskCachePath);
+      if (stat.size > 1024 * 512) {
+        serveLocalMediaFile(req, res, diskCachePath, "video/mp4");
+        return;
+      }
+    } catch {}
+  }
+
+  const streamInfo = await resolveYouTubeStreamUrls(videoId, quality);
   if (!streamInfo) {
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "text/plain" });
@@ -590,30 +628,39 @@ async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerRe
     return;
   }
 
-  // Pre-muxed format 18 (single combined MP4 stream with both video and audio):
+  // Pre-muxed format (single combined MP4 stream with both video and audio):
   // Proxy directly with Range headers! 0% CPU, no stalls, instant seeking!
   if (!streamInfo.audioUrl && startTime === 0) {
     proxyRemoteMediaStream(streamInfo.videoUrl, req, res, "video/mp4");
     return;
   }
 
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Accept-Ranges", "none");
+  res.writeHead(200, {
+    "Content-Type": "video/mp4",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+    "Cache-Control": "no-cache, no-store",
+    "Connection": "keep-alive"
+  });
 
   const ffmpegArgs: string[] = [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-probesize", "1000000",
+    "-analyzeduration", "1000000",
+    "-fflags", "+genpts+discardcorrupt",
     "-reconnect", "1",
+    "-reconnect_at_eof", "1",
     "-reconnect_streamed", "1",
-    "-reconnect_delay_max", "5"
+    "-reconnect_delay_max", "5",
+    "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"
   ];
 
   if (startTime > 0) {
     ffmpegArgs.push("-ss", String(startTime));
   }
-
-  ffmpegArgs.push(
-    "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
-    "-i", streamInfo.videoUrl
-  );
+  ffmpegArgs.push("-i", streamInfo.videoUrl);
 
   if (streamInfo.audioUrl) {
     if (startTime > 0) {
@@ -621,14 +668,18 @@ async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerRe
     }
     ffmpegArgs.push(
       "-reconnect", "1",
+      "-reconnect_at_eof", "1",
       "-reconnect_streamed", "1",
       "-reconnect_delay_max", "5",
       "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
       "-i", streamInfo.audioUrl,
+      "-map", "0:v:0",
+      "-map", "1:a:0",
       "-c:v", "copy",
       "-c:a", "aac",
       "-b:a", "192k",
       "-ac", "2",
+      "-max_muxing_queue_size", "4096",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof",
       "-f", "mp4",
       "pipe:1"
@@ -639,6 +690,7 @@ async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerRe
       "-c:a", "aac",
       "-b:a", "192k",
       "-ac", "2",
+      "-max_muxing_queue_size", "4096",
       "-movflags", "frag_keyframe+empty_moov+default_base_moof",
       "-f", "mp4",
       "pipe:1"
@@ -777,14 +829,9 @@ function handleMessage(client: ClientSession, raw: any) {
         return;
       }
 
+      // Do not allow switching seats while seated (user must click Stand Up first)
       if (client.seatIndex !== null) {
-        room.seats.delete(client.seatIndex);
-        broadcast(room, {
-          type: "seat-update",
-          seatId: client.seatIndex,
-          userId: null,
-          username: null
-        });
+        return;
       }
 
       client.seated = true;
@@ -914,15 +961,52 @@ function handleMessage(client: ClientSession, raw: any) {
           movie.time = Math.max(0, Number(message.time) || 0);
           break;
         case "volume":
-          movie.volume = Math.min(1, Math.max(0, Number(message.volume) || 0.8));
+          movie.volume = Math.min(1.5, Math.max(0, Number(message.volume) || 0.8));
           break;
       }
-      movie.updatedAt = now;
+      if (action !== "volume") {
+        movie.updatedAt = now;
+      }
 
       broadcast(room, {
         type: "movie-state",
         state: movieState(room),
         action,
+        by: client.username
+      });
+      break;
+    }
+
+    case "lighting":
+    case "lighting-update": {
+      if (!room || room.hostId !== client.id) return;
+      if (!room.lighting) {
+        room.lighting = { ...DEFAULT_LIGHTING };
+      }
+      const update = message.lighting;
+      if (update) {
+        if (typeof update.ceiling === "boolean") room.lighting.ceiling = update.ceiling;
+        if (typeof update.stairs === "boolean") room.lighting.stairs = update.stairs;
+        if (typeof update.belowScreen === "boolean") room.lighting.belowScreen = update.belowScreen;
+        const validSideModes: SideLightMode[] = [
+          "on",
+          "off",
+          "wave",
+          "hero_entry",
+          "pulse",
+          "chase",
+          "strobe",
+          "rainbow",
+          "fire",
+          "ambilight_sync"
+        ];
+        if (validSideModes.includes(update.sideLights)) {
+          room.lighting.sideLights = update.sideLights;
+        }
+      }
+      broadcast(room, {
+        type: "lighting-state",
+        lighting: room.lighting,
         by: client.username
       });
       break;
@@ -1010,7 +1094,11 @@ function handleMessage(client: ClientSession, raw: any) {
       break;
     }
 
+    case "ping":
     case "heartbeat": {
+      if (client.socket) {
+        (client.socket as any).isAlive = true;
+      }
       send(client, { type: "pong", time: Date.now() });
       break;
     }
@@ -1234,6 +1322,13 @@ function handleVideoProxy(req: http.IncomingMessage, res: http.ServerResponse, p
   proxyRemoteMediaStream(targetUrl, req, res, "video/mp4");
 }
 
+interface GdriveResolved {
+  directUrl: string;
+  cookies: string;
+  expiresAt: number;
+}
+const gdriveResolvedCache = new Map<string, GdriveResolved>();
+
 async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {
   let fileId = (parsedUrl.query?.id as string | undefined)?.trim();
   const inputUrl = parsedUrl.query?.url as string | undefined;
@@ -1260,11 +1355,17 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
     return;
   }
 
-  const initialUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`;
   const clientRange = req.headers.range as string | undefined;
 
+  // Use cached direct CDN URL to serve subsequent Range chunks with zero redirect latency & zero rate-limiting
+  const cached = gdriveResolvedCache.get(fileId);
+  const initialUrl = (cached && cached.expiresAt > Date.now())
+    ? cached.directUrl
+    : `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`;
+  const initialCookies = (cached && cached.expiresAt > Date.now()) ? cached.cookies : "";
+
   function fetchStream(targetUrl: string, cookieHeader = "", redirectCount = 0) {
-    if (redirectCount > 5) {
+    if (redirectCount > 6) {
       if (!res.headersSent) {
         res.writeHead(502, { "Content-Type": "text/plain" });
         res.end("Too many redirects from Google Drive");
@@ -1300,26 +1401,53 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         ? (newCookies ? `${cookieHeader}; ${newCookies}` : cookieHeader)
         : newCookies;
 
+      // Handle direct CDN redirect (doc-XX-XX-docs.googleusercontent.com)
       if ([301, 302, 303, 307].includes(proxyRes.statusCode || 0) && proxyRes.headers.location) {
         proxyReq.destroy();
-        return fetchStream(proxyRes.headers.location, mergedCookies, redirectCount + 1);
+        const nextLoc = proxyRes.headers.location;
+        // Cache redirected CDN link for subsequent Range requests
+        if (nextLoc.includes("googleusercontent.com") || nextLoc.includes("videoplayback")) {
+          gdriveResolvedCache.set(fileId!, {
+            directUrl: nextLoc,
+            cookies: mergedCookies,
+            expiresAt: Date.now() + 3 * 3600 * 1000 // 3 hours
+          });
+        }
+        return fetchStream(nextLoc, mergedCookies, redirectCount + 1);
+      }
+
+      // If cached URL returned 403 or 404 (expired direct token), clear cache and retry from scratch
+      if ((proxyRes.statusCode === 403 || proxyRes.statusCode === 404) && cached && targetUrl === cached.directUrl) {
+        gdriveResolvedCache.delete(fileId!);
+        proxyReq.destroy();
+        const fallbackUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`;
+        return fetchStream(fallbackUrl, "", 0);
       }
 
       const upstreamType = proxyRes.headers["content-type"] || "";
 
+      // Large file virus-scan confirmation form handling
       if (upstreamType.includes("html")) {
         let body = "";
         proxyRes.setEncoding("utf8");
         proxyRes.on("data", (chunk) => { body += chunk; });
         proxyRes.on("end", () => {
-          const confirmMatch = body.match(/id="uc-download-link"[^>]*href="([^"]+)"/i) || body.match(/confirm=([0-9A-Za-z_-]+)/i);
+          const confirmMatch = body.match(/name="confirm"\s+value="([^"]+)"/i) ||
+            body.match(/confirm=([0-9A-Za-z_-]+)/i) ||
+            body.match(/id="uc-download-link"[^>]*href="([^"]+)"/i);
+          const uuidMatch = body.match(/name="uuid"\s+value="([^"]+)"/i) || body.match(/uuid=([0-9A-Za-z_-]+)/i);
+
           if (confirmMatch && redirectCount < 5) {
-            const rawLink = confirmMatch[1];
-            let nextUrl = rawLink.startsWith("http")
-              ? rawLink.replace(/&amp;/g, "&")
-              : `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${rawLink}`;
-            if (rawLink.startsWith("/")) {
-              nextUrl = `https://drive.usercontent.google.com${rawLink.replace(/&amp;/g, "&")}`;
+            const confirmVal = confirmMatch[1];
+            const uuidVal = uuidMatch ? uuidMatch[1] : "";
+            let nextUrl = confirmVal.startsWith("http")
+              ? confirmVal.replace(/&amp;/g, "&")
+              : `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${confirmVal}`;
+            if (uuidVal && !nextUrl.includes("uuid=")) {
+              nextUrl += `&uuid=${uuidVal}`;
+            }
+            if (confirmVal.startsWith("/")) {
+              nextUrl = `https://drive.usercontent.google.com${confirmVal.replace(/&amp;/g, "&")}`;
             }
             return fetchStream(nextUrl, mergedCookies, redirectCount + 1);
           }
@@ -1355,6 +1483,15 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         resHeaders["Content-Range"] = proxyRes.headers["content-range"];
       }
 
+      // Cache successful direct stream URL
+      if (statusCode === 200 || statusCode === 206) {
+        gdriveResolvedCache.set(fileId!, {
+          directUrl: targetUrl,
+          cookies: mergedCookies,
+          expiresAt: Date.now() + 3 * 3600 * 1000
+        });
+      }
+
       res.writeHead(statusCode, resHeaders);
       proxyRes.pipe(res);
     });
@@ -1374,7 +1511,7 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
     proxyReq.end();
   }
 
-  fetchStream(initialUrl);
+  fetchStream(initialUrl, initialCookies);
 }
 
 // Next.js App Initialization
@@ -1384,6 +1521,25 @@ const handle = app.getRequestHandler();
 app.prepare().then(() => {
   const server = http.createServer((req, res) => {
     const parsedUrl = parse(req.url!, true);
+    if (parsedUrl.pathname === "/health" || parsedUrl.pathname === "/api/health") {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: "ok",
+        uptime: Math.floor(process.uptime()),
+        clients: wss.clients.size,
+        timestamp: Date.now()
+      }));
+      return;
+    }
     if (parsedUrl.pathname === "/api/video-proxy") {
       handleVideoProxy(req, res, parsedUrl);
       return;
@@ -1396,11 +1552,17 @@ app.prepare().then(() => {
       handleYouTubeStream(req, res, parsedUrl);
       return;
     }
-    if (parsedUrl.pathname && parsedUrl.pathname.startsWith("/assets/movies/cache/")) {
-      const fileName = path.basename(parsedUrl.pathname);
-      const targetFilePath = path.join(CACHE_DIR, fileName);
-      if (fs.existsSync(targetFilePath)) {
-        serveLocalMediaFile(req, res, targetFilePath, "video/mp4");
+    if (parsedUrl.pathname && parsedUrl.pathname.startsWith("/assets/movies/")) {
+      const subPath = parsedUrl.pathname.replace(/^\/assets\/movies\//, "");
+      const cachePath = path.join(CACHE_DIR, subPath);
+      const publicPath = path.join(process.cwd(), "public", "assets", "movies", subPath);
+
+      if (fs.existsSync(cachePath) && fs.statSync(cachePath).isFile()) {
+        serveLocalMediaFile(req, res, cachePath, "video/mp4");
+        return;
+      }
+      if (fs.existsSync(publicPath) && fs.statSync(publicPath).isFile()) {
+        serveLocalMediaFile(req, res, publicPath, "video/mp4");
         return;
       }
     }
@@ -1420,13 +1582,32 @@ app.prepare().then(() => {
     });
   });
 
+  // 10-second WebSocket heartbeat interval to keep Render connections alive & prune dead sockets
   const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((socket: any) => {
       if (socket.isAlive === false) return socket.terminate();
       socket.isAlive = false;
       socket.ping();
     });
-  }, 30000);
+  }, 10000);
+
+  // Automatic 10-second background self-ping if deployed on Render to keep instance from sleeping
+  const renderExternalUrl = process.env.RENDER_EXTERNAL_URL;
+  let renderKeepAliveTimer: NodeJS.Timeout | null = null;
+  if (renderExternalUrl) {
+    const healthUrl = `${renderExternalUrl.replace(/\/$/, "")}/api/health`;
+    console.log(`[Render Keep-Alive] Automatic 10s health ping active for ${healthUrl}`);
+    renderKeepAliveTimer = setInterval(() => {
+      try {
+        const parsed = new URL(healthUrl);
+        const transport = parsed.protocol === "https:" ? https : http;
+        const pingReq = transport.get(healthUrl, (res) => {
+          res.resume();
+        });
+        pingReq.on("error", () => {});
+      } catch {}
+    }, 10000);
+  }
 
   // High-precision periodic movie synchronization (keeps all clients strictly in sync without drift)
   const movieSyncInterval = setInterval(() => {
@@ -1452,6 +1633,7 @@ app.prepare().then(() => {
   process.on("SIGINT", () => {
     clearInterval(heartbeatInterval);
     clearInterval(movieSyncInterval);
+    if (renderKeepAliveTimer) clearInterval(renderKeepAliveTimer);
     wss.close();
     server.close(() => process.exit(0));
   });

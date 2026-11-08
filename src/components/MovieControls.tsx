@@ -13,10 +13,25 @@ import {
   FiCrop,
   FiFilm,
   FiVideo,
-  FiMoreHorizontal
+  FiMoreHorizontal,
+  FiSun,
+  FiMoon,
+  FiZap,
+  FiActivity,
+  FiHeart,
+  FiFastForward
 } from "react-icons/fi";
+import { IoFlame, IoColorPaletteOutline, IoFlash } from "react-icons/io5";
 import { HiBuildingLibrary, HiStar } from "react-icons/hi2";
-import { AudioSpatialMode, MovieState, ScreenFrameMode, VideoQuality } from "../types/cinema";
+import {
+  AudioSpatialMode,
+  LightingState,
+  MovieState,
+  ScreenFrameMode,
+  SideLightMode,
+  VideoQuality
+} from "../types/cinema";
+import { SIDE_LIGHT_ANIMATIONS, SideLightAnimationMeta } from "../lib/constants";
 
 interface MovieControlsProps {
   movie: MovieState;
@@ -29,6 +44,7 @@ interface MovieControlsProps {
   quality?: VideoQuality;
   spatialAudioEnabled?: boolean;
   spatialAudioMode?: AudioSpatialMode;
+  lighting?: LightingState;
   onPlayToggle: () => void;
   onSeek: (time: number) => void;
   onVolumeChange: (vol: number) => void;
@@ -38,6 +54,7 @@ interface MovieControlsProps {
   onToggleSpatialAudio?: () => void;
   onSpatialAudioModeChange?: (mode: AudioSpatialMode) => void;
   onQualityChange?: (quality: VideoQuality) => void;
+  onLightingChange?: (partial: Partial<LightingState>) => void;
 }
 
 function formatTime(seconds: number): string {
@@ -45,6 +62,33 @@ function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
+}
+
+function renderSideLightIcon(id: SideLightMode) {
+  switch (id) {
+    case "hero_entry":
+      return <FiZap />;
+    case "wave":
+      return <FiActivity />;
+    case "pulse":
+      return <FiHeart />;
+    case "chase":
+      return <FiFastForward />;
+    case "strobe":
+      return <IoFlash />;
+    case "rainbow":
+      return <IoColorPaletteOutline />;
+    case "fire":
+      return <IoFlame />;
+    case "ambilight_sync":
+      return <FiFilm />;
+    case "on":
+      return <FiSun />;
+    case "off":
+      return <FiMoon />;
+    default:
+      return <FiSun />;
+  }
 }
 
 export const MovieControls: React.FC<MovieControlsProps> = ({
@@ -58,6 +102,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
   quality = "auto",
   spatialAudioEnabled = true,
   spatialAudioMode = "atmos",
+  lighting = { ceiling: true, stairs: true, belowScreen: true, sideLights: "on" },
   onPlayToggle,
   onSeek,
   onVolumeChange,
@@ -66,16 +111,27 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
   onFrameModeChange,
   onToggleSpatialAudio,
   onSpatialAudioModeChange,
-  onQualityChange
+  onQualityChange,
+  onLightingChange
 }) => {
   const [isQualityMenuOpen, setIsQualityMenuOpen] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [isAudioMenuOpen, setIsAudioMenuOpen] = useState(false);
+  const [isLightingMenuOpen, setIsLightingMenuOpen] = useState(false);
 
   const qualityMenuRef = useRef<HTMLDivElement>(null);
   const frameMenuRef = useRef<HTMLDivElement>(null);
   const audioMenuRef = useRef<HTMLDivElement>(null);
-  const progressVal = duration > 0 ? (currentTime / duration) * 1000 : 0;
+  const lightingMenuRef = useRef<HTMLDivElement>(null);
+
+  const scrubValueRef = useRef<number>(0);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [displayValue, setDisplayValue] = useState(0);
+
+  const validDuration = isFinite(duration) && duration > 0 ? duration : 0;
+  const currentProgress = validDuration > 0 ? (currentTime / validDuration) * 1000 : 0;
+  const displayProgress = isScrubbing ? displayValue : (isNaN(currentProgress) ? 0 : currentProgress);
+  const displayCurrentTime = isScrubbing && validDuration > 0 ? (displayValue / 1000) * validDuration : currentTime;
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -89,16 +145,41 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
       if (audioMenuRef.current && !audioMenuRef.current.contains(target)) {
         setIsAudioMenuOpen(false);
       }
+      if (lightingMenuRef.current && !lightingMenuRef.current.contains(target)) {
+        setIsLightingMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const handlePointerDown = (e: React.PointerEvent<HTMLInputElement>) => {
+    if (!isHost) return;
+    setIsScrubbing(true);
+    const val = Number(e.currentTarget.value);
+    scrubValueRef.current = val;
+    setDisplayValue(val);
+  };
+
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isHost) return;
     const val = Number(e.target.value);
-    const targetTime = (val / 1000) * duration;
-    onSeek(targetTime);
+    scrubValueRef.current = val;
+    setDisplayValue(val);
+    if (!isScrubbing && validDuration > 0) {
+      onSeek((val / 1000) * validDuration);
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLInputElement> | React.MouseEvent<HTMLInputElement> | React.TouchEvent<HTMLInputElement>) => {
+    if (!isHost) return;
+    setIsScrubbing(false);
+    const inputEl = e.currentTarget as HTMLInputElement;
+    const val = inputEl && typeof inputEl.value !== "undefined" ? Number(inputEl.value) : scrubValueRef.current;
+    if (validDuration > 0) {
+      const targetTime = (val / 1000) * validDuration;
+      onSeek(targetTime);
+    }
   };
 
   return (
@@ -130,7 +211,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
         </button>
 
         <span id="movie-current-time" className="time-label">
-          {formatTime(currentTime)}
+          {formatTime(displayCurrentTime)}
         </span>
 
         <input
@@ -139,16 +220,22 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           type="range"
           min="0"
           max="1000"
-          value={isNaN(progressVal) ? 0 : progressVal}
+          value={Math.round(displayProgress)}
+          onPointerDown={handlePointerDown}
           onChange={handleSliderChange}
+          onPointerUp={handlePointerUp}
+          onMouseUp={handlePointerUp}
+          onTouchEnd={handlePointerUp}
           disabled={!isHost}
+          title={isHost ? `Seek to: ${formatTime(displayCurrentTime)} / ${formatTime(duration)}` : "Host controls playback"}
+          aria-label="Seek video progress"
         />
 
         <span id="movie-duration" className="time-label">
           {formatTime(duration)}
         </span>
 
-        <span className="volume-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+        <span className="volume-icon" style={{ display: "inline-flex", alignItems: "center" }} title={`Volume: ${Math.round(volume * 100)}%`}>
           <FiVolume2 />
         </span>
         <input
@@ -156,11 +243,16 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           className="range-input volume-input"
           type="range"
           min="0"
-          max="1"
+          max="1.5"
           step="0.01"
           value={volume}
           onChange={(e) => onVolumeChange(Number(e.target.value))}
+          title={`Volume: ${Math.round(volume * 100)}% (Boost up to 150%)`}
+          aria-label="Volume (up to 150%)"
         />
+        <span style={{ fontSize: "9px", color: volume > 1.0 ? "#38bdf8" : "#94a3b8", fontWeight: 700, minWidth: "28px" }}>
+          {Math.round(volume * 100)}%
+        </span>
 
         {/* Dolby Atmos & Theater Echo Spatial Audio Dropdown */}
         {(onSpatialAudioModeChange || onToggleSpatialAudio) && (
@@ -275,15 +367,15 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                 fontSize: "10px",
                 fontWeight: 700,
                 letterSpacing: "0.04em",
-                color: quality === "auto" ? "#e2e8f0" : "#a78bfa",
+                color: quality === "auto" || quality === "1080p" ? "#60a5fa" : "#a78bfa",
                 borderColor: "rgba(255,255,255,0.14)"
               }}
-              title={`Video Quality: ${quality.toUpperCase()}`}
+              title={`Video Quality: ${quality === "auto" ? "1080P AUTO" : quality.toUpperCase()}`}
               aria-label="Select video quality"
               onClick={() => setIsQualityMenuOpen(!isQualityMenuOpen)}
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                {quality.toUpperCase()} <FiChevronDown />
+                {quality === "auto" ? "1080P AUTO" : quality.toUpperCase()} <FiChevronDown />
               </span>
             </button>
 
@@ -298,7 +390,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                   border: "1px solid rgba(255, 255, 255, 0.12)",
                   borderRadius: "10px",
                   padding: "4px",
-                  minWidth: "118px",
+                  minWidth: "135px",
                   boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
                   zIndex: 60,
                   display: "flex",
@@ -329,7 +421,7 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
                       setIsQualityMenuOpen(false);
                     }}
                   >
-                    <span>{q === "auto" ? "Auto (Adaptive)" : q.toUpperCase()}</span>
+                    <span>{q === "auto" ? "Auto (1080P Max)" : q === "1080p" ? "1080P (Full HD)" : q.toUpperCase()}</span>
                     {quality === q && <FiCheck />}
                   </button>
                 ))}
@@ -438,6 +530,331 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
             )}
           </div>
         )}
+
+        {/* Theatre Lighting & Side Lights Animations Popover */}
+        <div ref={lightingMenuRef} style={{ position: "relative" }}>
+          {(() => {
+            let label = "LIGHTS";
+            let color = "#fbbf24";
+            let icon = <FiSun />;
+            const allOff = !lighting.ceiling && !lighting.stairs && !lighting.belowScreen && lighting.sideLights === "off";
+
+            if (lighting.sideLights === "hero_entry") {
+              label = "HERO";
+              color = "#f59e0b";
+              icon = <FiZap />;
+            } else if (lighting.sideLights === "wave") {
+              label = "WAVE";
+              color = "#38bdf8";
+              icon = <FiActivity />;
+            } else if (lighting.sideLights === "pulse") {
+              label = "PULSE";
+              color = "#ec4899";
+              icon = <FiHeart />;
+            } else if (lighting.sideLights === "chase") {
+              label = "CHASE";
+              color = "#06b6d4";
+              icon = <FiFastForward />;
+            } else if (lighting.sideLights === "strobe") {
+              label = "STROBE";
+              color = "#ef4444";
+              icon = <IoFlash />;
+            } else if (lighting.sideLights === "rainbow") {
+              label = "CHROMA";
+              color = "#a855f7";
+              icon = <IoColorPaletteOutline />;
+            } else if (lighting.sideLights === "fire") {
+              label = "FIRE";
+              color = "#f97316";
+              icon = <IoFlame />;
+            } else if (lighting.sideLights === "ambilight_sync") {
+              label = "SYNC";
+              color = "#10b981";
+              icon = <FiFilm />;
+            } else if (allOff) {
+              label = "BLACKOUT";
+              color = "#94a3b8";
+              icon = <FiMoon />;
+            } else if (lighting.sideLights === "off") {
+              label = "DIM";
+              color = "#94a3b8";
+              icon = <FiMoon />;
+            }
+
+            return (
+              <button
+                id="movie-lighting-button"
+                className="round-control small"
+                style={{
+                  width: "auto",
+                  padding: "0 8px",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  color,
+                  borderColor: allOff ? "rgba(255,255,255,0.14)" : `${color}80`,
+                  background: allOff ? "transparent" : `${color}1a`,
+                  boxShadow: allOff ? "none" : `0 0 10px ${color}40`
+                }}
+                title="Theatre Lighting: Ceiling, Stairs, Screen & Side Animations"
+                aria-label="Theatre Lighting Controls"
+                onClick={() => setIsLightingMenuOpen(!isLightingMenuOpen)}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  {icon} {label} <FiChevronDown />
+                </span>
+              </button>
+            );
+          })()}
+
+          {isLightingMenuOpen && (
+            <div className="lighting-popover">
+              <div className="lighting-header">
+                <span className="lighting-title">
+                  <FiSun style={{ color: "#fbbf24" }} /> THEATRE LIGHTING
+                </span>
+                <span
+                  className="lighting-badge"
+                  style={{
+                    background: isHost ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.06)",
+                    color: isHost ? "#fbbf24" : "#94a3b8",
+                    border: isHost ? "1px solid rgba(251,191,36,0.3)" : "1px solid rgba(255,255,255,0.1)"
+                  }}
+                >
+                  {isHost ? "Host Control" : "Host Only"}
+                </span>
+              </div>
+
+              {/* Special HERO ENTRY Action Banner */}
+              <button
+                type="button"
+                className={`hero-entry-banner-btn ${lighting.sideLights === "hero_entry" ? "active" : ""}`}
+                title="Trigger grand hero entrance fanfare strobe & gold/cyan shockwave across walls"
+                disabled={!isHost}
+                onClick={() =>
+                  onLightingChange?.({
+                    ceiling: false,
+                    stairs: true,
+                    belowScreen: false,
+                    sideLights: "hero_entry"
+                  })
+                }
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span className="hero-lightning" style={{ display: "inline-flex", alignItems: "center" }}><FiZap /></span>
+                  <div style={{ textAlign: "left" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.04em", color: "#fef08a" }}>
+                      TRIGGER HERO ENTRY
+                    </div>
+                    <div style={{ fontSize: "8.5px", color: "rgba(254,240,138,0.75)" }}>
+                      Gold & cyan fanfare burst for character reveals
+                    </div>
+                  </div>
+                </div>
+                <span className="hero-trigger-pill">
+                  {lighting.sideLights === "hero_entry" ? "ACTIVE" : "FIRE"}
+                </span>
+              </button>
+
+              {/* Quick Scene Presets */}
+              <div className="lighting-presets">
+                <button
+                  type="button"
+                  className="preset-btn"
+                  title="All theatre lights on"
+                  disabled={!isHost}
+                  onClick={() =>
+                    onLightingChange?.({
+                      ceiling: true,
+                      stairs: true,
+                      belowScreen: true,
+                      sideLights: "on"
+                    })
+                  }
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}><FiSun /> Bright</span>
+                </button>
+                <button
+                  type="button"
+                  className="preset-btn"
+                  title="Side neon wave animation with stair safety lights"
+                  disabled={!isHost}
+                  onClick={() =>
+                    onLightingChange?.({
+                      ceiling: false,
+                      stairs: true,
+                      belowScreen: false,
+                      sideLights: "wave"
+                    })
+                  }
+                  style={{
+                    borderColor: lighting.sideLights === "wave" ? "rgba(56,189,248,0.5)" : undefined,
+                    color: lighting.sideLights === "wave" ? "#38bdf8" : undefined
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}><FiActivity /> Wave</span>
+                </button>
+                <button
+                  type="button"
+                  className="preset-btn"
+                  title="Cyberpunk rainbow chroma spectrum"
+                  disabled={!isHost}
+                  onClick={() =>
+                    onLightingChange?.({
+                      ceiling: false,
+                      stairs: true,
+                      belowScreen: false,
+                      sideLights: "rainbow"
+                    })
+                  }
+                  style={{
+                    borderColor: lighting.sideLights === "rainbow" ? "rgba(168,85,247,0.5)" : undefined,
+                    color: lighting.sideLights === "rainbow" ? "#c084fc" : undefined
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}><IoColorPaletteOutline /> Chroma</span>
+                </button>
+                <button
+                  type="button"
+                  className="preset-btn"
+                  title="Cinema movie mode: ceiling and side off, stairs dimly lit"
+                  disabled={!isHost}
+                  onClick={() =>
+                    onLightingChange?.({
+                      ceiling: false,
+                      stairs: true,
+                      belowScreen: false,
+                      sideLights: "off"
+                    })
+                  }
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}><FiFilm /> Cinema Dim</span>
+                </button>
+                <button
+                  type="button"
+                  className="preset-btn"
+                  title="Total cinema blackout: all fixtures dark"
+                  disabled={!isHost}
+                  onClick={() =>
+                    onLightingChange?.({
+                      ceiling: false,
+                      stairs: false,
+                      belowScreen: false,
+                      sideLights: "off"
+                    })
+                  }
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}><FiMoon /> Blackout</span>
+                </button>
+              </div>
+
+              {/* Ceiling Lights Toggle (100% pitch black when off, zero glow) */}
+              <div className="lighting-row">
+                <div className="lighting-label-group">
+                  <span className="lighting-name">Ceiling Lights</span>
+                  <span className="lighting-sub">Overhead tube grid (zero glow when off)</span>
+                </div>
+                <button
+                  type="button"
+                  className={`lighting-toggle-pill ${lighting.ceiling ? "on" : "off"}`}
+                  disabled={!isHost}
+                  onClick={() => onLightingChange?.({ ceiling: !lighting.ceiling })}
+                >
+                  {lighting.ceiling ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              {/* Stair Lights Toggle */}
+              <div className="lighting-row">
+                <div className="lighting-label-group">
+                  <span className="lighting-name">Stair Lights</span>
+                  <span className="lighting-sub">Aisle & step LED treads</span>
+                </div>
+                <button
+                  type="button"
+                  className={`lighting-toggle-pill ${lighting.stairs ? "on" : "off"}`}
+                  disabled={!isHost}
+                  onClick={() => onLightingChange?.({ stairs: !lighting.stairs })}
+                >
+                  {lighting.stairs ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              {/* Below Screen Lights Toggle */}
+              <div className="lighting-row">
+                <div className="lighting-label-group">
+                  <span className="lighting-name">Below Screen</span>
+                  <span className="lighting-sub">Curved proscenium rim</span>
+                </div>
+                <button
+                  type="button"
+                  className={`lighting-toggle-pill ${lighting.belowScreen ? "on" : "off"}`}
+                  disabled={!isHost}
+                  onClick={() => onLightingChange?.({ belowScreen: !lighting.belowScreen })}
+                >
+                  {lighting.belowScreen ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              {/* Side Lights Animations Header */}
+              <div style={{ marginTop: "4px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+                  <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.05em", color: "#e2e8f0" }}>
+                    SIDE LIGHT ANIMATIONS
+                  </span>
+                  <span style={{ fontSize: "8.5px", color: "#94a3b8" }}>
+                    Soft ambient glow · No wall blotches
+                  </span>
+                </div>
+
+                {/* 10 Animated Light Modes Grid */}
+                <div className="side-anim-grid">
+                  {SIDE_LIGHT_ANIMATIONS.map((anim) => {
+                    const isActive = lighting.sideLights === anim.id;
+                    return (
+                      <button
+                        key={anim.id}
+                        type="button"
+                        className={`side-anim-card ${isActive ? "active" : ""}`}
+                        style={{
+                          borderColor: isActive ? anim.color : "rgba(255,255,255,0.08)",
+                          background: isActive ? `${anim.color}22` : "rgba(255,255,255,0.03)",
+                          boxShadow: isActive ? `0 0 10px ${anim.color}35` : "none"
+                        }}
+                        disabled={!isHost}
+                        onClick={() => onLightingChange?.({ sideLights: anim.id })}
+                        title={anim.desc}
+                      >
+                        <span style={{ fontSize: "13px", display: "inline-flex", alignItems: "center", color: anim.color }}>
+                          {renderSideLightIcon(anim.id)}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "9px",
+                            fontWeight: isActive ? 700 : 500,
+                            color: isActive ? anim.color : "#cbd5e1",
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          {anim.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Live Video Ambilight Status */}
+              <div className="ambilight-status-bar">
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span className="ambilight-dot" />
+                  <span>Screen Ambilight: Active</span>
+                </div>
+                <span style={{ fontSize: "8.5px", color: "#64748b" }}>Live video ambient bounce</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         <button
           id="movie-settings-button"

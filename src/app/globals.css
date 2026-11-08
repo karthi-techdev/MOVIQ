@@ -1605,3 +1605,369 @@ kbd {
   border-color: rgba(234, 179, 8, 0.4);
 }
 
+/* ==========================================================================
+   Theatre Lighting System & Atmosphere Controls
+   ========================================================================== */
+
+.lighting-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  background: rgba(10, 14, 26, 0.96);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 12px 14px;
+  min-width: 290px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75), 0 0 24px rgba(56, 189, 248, 0.08);
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lighting-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lighting-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lighting-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  letter-spacing: 0.02em;
+}
+
+.lighting-presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.hero-entry-banner-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 10px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(234, 179, 8, 0.12));
+  border: 1.5px solid rgba(245, 158, 11, 0.55);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.18);
+  margin-bottom: 2px;
+}
+
+.hero-entry-banner-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.35), rgba(234, 179, 8, 0.22));
+  border-color: rgba(245, 158, 11, 0.85);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
+  transform: translateY(-1px);
+}
+
+.hero-entry-banner-btn.active {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.4), rgba(56, 189, 248, 0.25));
+  border-color: #f59e0b;
+  box-shadow: 0 0 22px rgba(245, 158, 11, 0.5);
+  animation: heroGlowPulse 1.6s infinite ease-in-out;
+}
+
+@keyframes heroGlowPulse {
+  0%, 100% {
+    box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(245, 158, 11, 0.8), 0 0 16px rgba(56, 189, 248, 0.4);
+  }
+}
+
+.hero-lightning {
+  font-size: 16px;
+  display: inline-block;
+  animation: heroLightningShake 1.8s infinite ease-in-out;
+}
+
+@keyframes heroLightningShake {
+  0%, 100% { transform: scale(1); }
+  20% { transform: scale(1.3) rotate(8deg); }
+  40% { transform: scale(1.1) rotate(-6deg); }
+  60% { transform: scale(1.25) rotate(4deg); }
+}
+
+.hero-trigger-pill {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 3px 8px;
+  background: rgba(245, 158, 11, 0.3);
+  border: 1px solid rgba(245, 158, 11, 0.6);
+  border-radius: 6px;
+  color: #fef08a;
+}
+
+.side-anim-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.side-anim-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.side-anim-card:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.side-anim-card:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.side-anim-card.active {
+  font-weight: 700;
+}
+
+.preset-btn {
+  padding: 5px 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+  font-size: 9.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.preset-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.preset-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lighting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  gap: 8px;
+}
+
+.lighting-label-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.lighting-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.lighting-sub {
+  font-size: 9px;
+  color: #94a3b8;
+}
+
+.lighting-toggle-pill {
+  padding: 3px 12px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-width: 46px;
+  text-align: center;
+}
+
+.lighting-toggle-pill.on {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.6);
+  color: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+.lighting-toggle-pill.off {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #64748b;
+}
+
+.lighting-toggle-pill:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.side-segmented-group {
+  display: flex;
+  gap: 3px;
+  background: rgba(0, 0, 0, 0.32);
+  padding: 2px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.side-segment-btn {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.side-segment-btn:hover:not(:disabled) {
+  color: #e2e8f0;
+}
+
+.side-segment-btn.active-on {
+  background: rgba(56, 189, 248, 0.25);
+  color: #38bdf8;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+}
+
+.side-segment-btn.active-wave {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(56, 189, 248, 0.35));
+  color: #e0e7ff;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.45);
+}
+
+.side-segment-btn.active-off {
+  background: rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+
+.side-segment-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ambilight-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: rgba(56, 189, 248, 0.06);
+  border: 1px solid rgba(56, 189, 248, 0.15);
+  border-radius: 8px;
+  font-size: 9.5px;
+  color: #93c5fd;
+}
+
+.ambilight-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  animation: ambilightPulse 2s infinite ease-in-out;
+}
+
+@keyframes ambilightPulse {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+/* --- Cinema Focus Mode Styling --- */
+.hidden-by-focus {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(14px) !important;
+  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.top-bar.hidden-by-focus {
+  transform: translateY(-16px) !important;
+}
+
+.bottom-controls.hidden-by-focus {
+  transform: translateY(20px) !important;
+}
+
+.seat-panel.hidden-by-focus {
+  transform: translateY(12px) !important;
+}
+
+.exit-focus-pill {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 99999;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 9999px;
+  color: #f1f5f9;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.65);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0.5;
+}
+
+.exit-focus-pill:hover {
+  opacity: 1;
+  background: rgba(30, 41, 59, 0.92);
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+  transform: scale(1.05);
+}
+
+

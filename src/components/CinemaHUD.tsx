@@ -100,6 +100,20 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
 
   return (
     <>
+      {/* Floating Exit Focus Mode Button */}
+      {focusMode && (
+        <button
+          id="exit-focus-pill-button"
+          className="exit-focus-pill"
+          onClick={onToggleFocus}
+          title="Exit Cinema Focus Mode (Esc or F)"
+          aria-label="Exit Cinema Focus Mode"
+        >
+          <FiMinimize style={{ fontSize: "13px" }} />
+          <span>Exit Focus</span>
+        </button>
+      )}
+
       {/* Top Navigation Bar */}
       <header className={`top-bar glass-panel auto-ui ${focusMode ? "hidden-by-focus" : ""}`}>
         <div className="top-bar-left">

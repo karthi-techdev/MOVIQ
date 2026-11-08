@@ -17,6 +17,7 @@ import {
   AudioSpatialMode,
   CameraMode,
   ChatMessage,
+  LightingState,
   MovieState,
   RoomDetail,
   RoomSummary,
@@ -25,7 +26,7 @@ import {
   UserData,
   VideoQuality
 } from "../types/cinema";
-import { DEFAULT_MOVIE } from "../lib/constants";
+import { DEFAULT_LIGHTING, DEFAULT_MOVIE } from "../lib/constants";
 
 function CinemaApp() {
   const { showToast } = useToast();
@@ -37,6 +38,7 @@ function CinemaApp() {
   const [currentRoom, setCurrentRoom] = useState<RoomDetail | null>(null);
   const [users, setUsers] = useState<UserData[]>([]);
   const [movie, setMovie] = useState<MovieState>(DEFAULT_MOVIE);
+  const [lighting, setLighting] = useState<LightingState>(DEFAULT_LIGHTING);
 
   const [cameraMode, setCameraMode] = useState<CameraMode>("TPP");
   const [currentSeat, setCurrentSeat] = useState<SeatData | null>(null);
@@ -70,12 +72,22 @@ function CinemaApp() {
   const hlsRef = useRef<Hls | null>(null);
 
   const selfIdRef = useRef<string>("");
+  const currentRoomRef = useRef<RoomDetail | null>(null);
+  const currentSeatRef = useRef<SeatData | null>(null);
   const isChatOpenRef = useRef<boolean>(false);
   const showToastRef = useRef(showToast);
 
   useEffect(() => {
     selfIdRef.current = selfId;
   }, [selfId]);
+
+  useEffect(() => {
+    currentRoomRef.current = currentRoom;
+  }, [currentRoom]);
+
+  useEffect(() => {
+    currentSeatRef.current = currentSeat;
+  }, [currentSeat]);
 
   useEffect(() => {
     isChatOpenRef.current = isChatOpen;
@@ -117,12 +129,13 @@ function CinemaApp() {
   }, []);
 
   // Universal Media Loader: maps all videos directly onto the curved 3D cinema screen
-  const applyMediaSource = useCallback((mediaUrl: string) => {
+  const applyMediaSource = useCallback((mediaUrl: string, selectedQuality?: VideoQuality, resumeTime?: number, autoResume?: boolean) => {
     const video = videoRef.current;
     const engine = engineRef.current;
     if (!video || !mediaUrl) return;
 
     let targetUrl = mediaUrl.trim();
+    const currentQ = selectedQuality || quality || "1080p";
 
     const apiBase = (process.env.NEXT_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
@@ -130,16 +143,16 @@ function CinemaApp() {
       targetUrl = `${apiBase}${targetUrl}`;
     }
 
-    // 1. YouTube links -> high-FPS cinema stream
+    // 1. YouTube links -> high-FPS cinema stream up to 1080p
     const ytMatch = targetUrl.match(
       /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
     );
     if (ytMatch && ytMatch[1] && !targetUrl.includes("/api/youtube-stream")) {
-      targetUrl = `${apiBase}/api/youtube-stream?id=${ytMatch[1]}`;
+      targetUrl = `${apiBase}/api/youtube-stream?id=${ytMatch[1]}&quality=${currentQ}`;
     } else if (/^[a-zA-Z0-9_-]{11}$/.test(targetUrl) && !targetUrl.includes("/") && !targetUrl.includes(".")) {
-      targetUrl = `${apiBase}/api/youtube-stream?id=${targetUrl}`;
+      targetUrl = `${apiBase}/api/youtube-stream?id=${targetUrl}&quality=${currentQ}`;
     } else if (/^-[a-zA-Z0-9_-]{11}$/.test(targetUrl) && !targetUrl.includes("/")) {
-      targetUrl = `${apiBase}/api/youtube-stream?id=${targetUrl.slice(1)}`;
+      targetUrl = `${apiBase}/api/youtube-stream?id=${targetUrl.slice(1)}&quality=${currentQ}`;
     }
 
     // 2. Google Drive links -> direct streaming proxy
@@ -147,9 +160,9 @@ function CinemaApp() {
       /(?:(?:drive\.google|drive\.usercontent\.google)\.com\/(?:file\/d\/|open\?id=|uc\?id=|download\?id=)|id=)([a-zA-Z0-9_-]{20,})/i
     );
     if (gdriveMatch && gdriveMatch[1] && !targetUrl.includes("/api/gdrive-stream")) {
-      targetUrl = `${apiBase}/api/gdrive-stream?id=${gdriveMatch[1]}`;
+      targetUrl = `${apiBase}/api/gdrive-stream?id=${gdriveMatch[1]}&quality=${currentQ}`;
     } else if (/^[a-zA-Z0-9_-]{25,45}$/.test(targetUrl) && !targetUrl.includes("/") && !targetUrl.includes(".")) {
-      targetUrl = `/api/gdrive-stream?id=${targetUrl}`;
+      targetUrl = `/api/gdrive-stream?id=${targetUrl}&quality=${currentQ}`;
     }
 
     // 3. Route external URLs through CORS streaming proxy to prevent WebGL VideoTexture taint
@@ -167,6 +180,16 @@ function CinemaApp() {
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
+    }
+
+    if (resumeTime && resumeTime > 0) {
+      const onResume = () => {
+        try {
+          video.currentTime = resumeTime;
+          if (autoResume) video.play().catch(() => {});
+        } catch {}
+      };
+      video.addEventListener("loadedmetadata", onResume, { once: true });
     }
 
     if (targetUrl.includes(".m3u8")) {
@@ -190,15 +213,24 @@ function CinemaApp() {
       video.load();
       if (engine) engine.setVideoSource(video);
     }
-  }, []);
+  }, [quality]);
 
   // Video Element event listeners and CORS error fallback
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const onTimeUpdate = () => setVideoTime(video.currentTime);
-    const onDurationChange = () => setVideoDuration(video.duration || 0);
+    const onTimeUpdate = () => {
+      setVideoTime(video.currentTime);
+      if (video.duration && isFinite(video.duration) && video.duration > 0 && videoDuration !== video.duration) {
+        setVideoDuration(video.duration);
+      }
+    };
+    const onDurationChange = () => {
+      if (video.duration && isFinite(video.duration) && video.duration > 0) {
+        setVideoDuration(video.duration);
+      }
+    };
     const onPlay = () => {
       if (engineRef.current) {
         engineRef.current.showVideoTexture();
@@ -207,6 +239,23 @@ function CinemaApp() {
     const onLoadedData = () => {
       if (engineRef.current && (video.currentTime > 0 || !video.paused)) {
         engineRef.current.showVideoTexture();
+      }
+    };
+
+    // Stalled / waiting buffer auto-recovery
+    let stallRecoveryTimeout: NodeJS.Timeout | null = null;
+    const onStallOrWait = () => {
+      if (stallRecoveryTimeout) clearTimeout(stallRecoveryTimeout);
+      stallRecoveryTimeout = setTimeout(() => {
+        if (video && !video.paused && video.readyState < 3) {
+          video.play().catch(() => {});
+        }
+      }, 1200);
+    };
+    const onClearStall = () => {
+      if (stallRecoveryTimeout) {
+        clearTimeout(stallRecoveryTimeout);
+        stallRecoveryTimeout = null;
       }
     };
 
@@ -226,14 +275,23 @@ function CinemaApp() {
     video.addEventListener("loadedmetadata", onDurationChange);
     video.addEventListener("play", onPlay);
     video.addEventListener("loadeddata", onLoadedData);
+    video.addEventListener("waiting", onStallOrWait);
+    video.addEventListener("stalled", onStallOrWait);
+    video.addEventListener("canplay", onClearStall);
+    video.addEventListener("playing", onClearStall);
     video.addEventListener("error", onVideoError);
 
     return () => {
+      if (stallRecoveryTimeout) clearTimeout(stallRecoveryTimeout);
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("durationchange", onDurationChange);
       video.removeEventListener("loadedmetadata", onDurationChange);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("loadeddata", onLoadedData);
+      video.removeEventListener("waiting", onStallOrWait);
+      video.removeEventListener("stalled", onStallOrWait);
+      video.removeEventListener("canplay", onClearStall);
+      video.removeEventListener("playing", onClearStall);
       video.removeEventListener("error", onVideoError);
     };
   }, []);
@@ -262,7 +320,7 @@ function CinemaApp() {
       if (msg.rooms) setPublicRooms(msg.rooms);
     });
 
-    socketClient.on("joined", (msg: { userId: string; room: RoomDetail; movie: MovieState; users: UserData[] }) => {
+    socketClient.on("joined", (msg: { userId: string; room: RoomDetail; movie: MovieState; users: UserData[]; lighting?: LightingState }) => {
       setSelfId(msg.userId);
       setCurrentRoom(msg.room);
       setUsers(msg.room.users || []);
@@ -271,6 +329,9 @@ function CinemaApp() {
       if (msg.movie) {
         setMovie(msg.movie);
       }
+
+      const initialLights = msg.lighting || msg.room?.lighting || DEFAULT_LIGHTING;
+      setLighting(initialLights);
 
       showToastRef.current(`Welcome to ${msg.room.name}!`);
 
@@ -283,9 +344,14 @@ function CinemaApp() {
 
           const engine = new CinemaEngine(containerRef.current, videoRef.current, {
             onSeatClicked: (seatIdx) => {
+              if (currentSeatRef.current !== null) return; // Do not switch seats while seated
               socketClient.send({ type: "take-seat", seat: seatIdx });
             },
             onSeatHover: (info) => {
+              if (currentSeatRef.current !== null) {
+                setSeatTooltip(null);
+                return;
+              }
               setSeatTooltip(info);
             },
             onLocalMovement: (pos, rot, pitch, yaw, action) => {
@@ -312,6 +378,7 @@ function CinemaApp() {
           });
 
           engine.localUserId = msg.userId;
+          engine.setLightingState(initialLights);
           engineRef.current = engine;
 
           // Add all existing users' avatars
@@ -402,8 +469,13 @@ function CinemaApp() {
       const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
       const targetTime = Math.max(0, msg.state.time + elapsed);
 
-      if (Math.abs(video.currentTime - targetTime) > 0.9) {
-        video.currentTime = targetTime;
+      // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 3 seconds (NEVER on volume)
+      if (msg.action !== "volume" && (msg.action === "seek" || Math.abs(video.currentTime - targetTime) > 3.0)) {
+        try {
+          if (isFinite(targetTime) && targetTime >= 0) {
+            video.currentTime = targetTime;
+          }
+        } catch {}
       }
 
       if (msg.state.playing && video.paused) {
@@ -423,19 +495,39 @@ function CinemaApp() {
       }
 
       if (typeof msg.state.volume === "number") {
-        video.volume = msg.state.volume;
-        setVideoVolume(msg.state.volume);
+        const clampedVol = Math.max(0, Math.min(1.5, msg.state.volume));
+        try {
+          video.volume = Math.min(1.0, clampedVol);
+        } catch {}
+        if (engine) {
+          engine.setVolume(clampedVol);
+        }
+        setVideoVolume(clampedVol);
       }
     });
 
     socketClient.on("movie-sync", (msg: { time: number; playing: boolean; serverTime: number }) => {
       const video = videoRef.current;
       if (!video) return;
+
+      // Host's player is the clock source: never interrupt or jitter the host!
+      if (currentRoomRef.current?.hostId === selfIdRef.current) return;
+
       const now = Date.now();
       const latency = (now - msg.serverTime) / 1000;
       const targetTime = msg.time + latency;
-      if (Math.abs(video.currentTime - targetTime) > 0.85) {
+      const drift = targetTime - video.currentTime;
+
+      // Smooth playback rate slew for minor drifts to guarantee silky smooth streaming without pauses:
+      if (Math.abs(drift) > 3.0) {
         video.currentTime = targetTime;
+        video.playbackRate = 1.0;
+      } else if (drift > 0.4) {
+        video.playbackRate = 1.04;
+      } else if (drift < -0.4) {
+        video.playbackRate = 0.96;
+      } else {
+        video.playbackRate = 1.0;
       }
     });
 
@@ -465,6 +557,15 @@ function CinemaApp() {
       );
       if (engineRef.current) {
         engineRef.current.updateNameplate(msg.userId, msg.speaking || false, !(msg.muted ?? true));
+      }
+    });
+
+    socketClient.on("lighting-state", (msg: { lighting: LightingState; by?: string }) => {
+      if (msg.lighting) {
+        setLighting(msg.lighting);
+        if (engineRef.current) {
+          engineRef.current.setLightingState(msg.lighting);
+        }
       }
     });
 
@@ -602,8 +703,16 @@ function CinemaApp() {
     if (!isHost) return;
 
     if (videoRef.current) {
-      videoRef.current.currentTime = targetTime;
+      const video = videoRef.current;
+      if (isFinite(targetTime) && targetTime >= 0) {
+        try {
+          video.currentTime = targetTime;
+        } catch (e) {
+          console.warn("Seek error:", e);
+        }
+      }
     }
+    setVideoTime(targetTime);
 
     socketClient.send({
       type: "playback",
@@ -613,16 +722,18 @@ function CinemaApp() {
   };
 
   const handleVolumeChange = (vol: number) => {
-    setVideoVolume(vol);
-    if (videoRef.current) {
-      videoRef.current.volume = vol;
+    const clamped = Math.max(0, Math.min(1.5, vol));
+    setVideoVolume(clamped);
+
+    if (engineRef.current) {
+      engineRef.current.spatialAudio.resume();
+      engineRef.current.setVolume(clamped);
     }
-    if (isHost) {
-      socketClient.send({
-        type: "playback",
-        action: "volume",
-        volume: vol
-      });
+
+    if (videoRef.current) {
+      try {
+        videoRef.current.volume = Math.min(1.0, clamped);
+      } catch {}
     }
   };
 
@@ -659,6 +770,32 @@ function CinemaApp() {
     showToast(`Screen Frame: ${labels[mode] || mode}`);
   };
 
+  const handleToggleFocus = useCallback(() => {
+    setFocusMode((prev) => {
+      const next = !prev;
+      showToast(`Cinema Focus Mode: ${next ? "Active (HUD Hidden)" : "Exited"}`);
+      return next;
+    });
+  }, [showToast]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (["input", "textarea"].includes((e.target as HTMLElement)?.tagName?.toLowerCase())) {
+        return;
+      }
+      if (e.code === "KeyF") {
+        e.preventDefault();
+        handleToggleFocus();
+      } else if (e.code === "Escape" && focusMode) {
+        e.preventDefault();
+        setFocusMode(false);
+        showToast("Cinema Focus Mode: Exited");
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusMode, handleToggleFocus, showToast]);
+
   const handleToggleSpatialAudio = () => {
     if (!engineRef.current) return;
     const next = !spatialAudioEnabled;
@@ -693,8 +830,41 @@ function CinemaApp() {
           hlsRef.current.currentLevel = idx;
         }
       }
+    } else if (movie && movie.url) {
+      const video = videoRef.current;
+      const curTime = video ? video.currentTime : 0;
+      const isPlaying = video ? !video.paused : false;
+      applyMediaSource(movie.url, q, curTime, isPlaying);
     }
-    showToast(`Video Quality: ${q === "auto" ? "Auto (Adaptive)" : q.toUpperCase()}`);
+    showToast(`Video Quality: ${q === "auto" ? "1080P (Full HD 60fps)" : q.toUpperCase()}`);
+  };
+
+  const handleLightingChange = (partial: Partial<LightingState>) => {
+    if (!isHost) return;
+    const nextLighting = { ...lighting, ...partial };
+    setLighting(nextLighting);
+    if (engineRef.current) {
+      engineRef.current.setLightingState(nextLighting);
+    }
+    socketClient.send({
+      type: "lighting-update",
+      lighting: nextLighting
+    });
+
+    if (partial.sideLights) {
+      const modeLabels: Record<string, string> = {
+        on: "Side Lights: Steady Glow ON",
+        wave: "Side Lights: Wave Animation Active",
+        off: "Side Lights: OFF"
+      };
+      showToast(modeLabels[partial.sideLights] || "Side Lights Updated");
+    } else if (partial.ceiling !== undefined) {
+      showToast(`Ceiling Lights: ${partial.ceiling ? "ON" : "OFF (Dimmed)"}`);
+    } else if (partial.stairs !== undefined) {
+      showToast(`Stair Lights: ${partial.stairs ? "ON" : "OFF"}`);
+    } else if (partial.belowScreen !== undefined) {
+      showToast(`Below Screen Lights: ${partial.belowScreen ? "ON" : "OFF"}`);
+    }
   };
 
   const handleSendMessage = (text: string) => {
@@ -765,13 +935,14 @@ function CinemaApp() {
                 movie={movie}
                 isHost={isHost}
                 currentTime={videoTime}
-                duration={videoDuration}
+                duration={videoDuration || (movie.url?.includes("big_buck_bunny") ? 59.6 : 0)}
                 volume={videoVolume}
                 fitMode={fitMode}
                 frameMode={frameMode}
                 quality={quality}
                 spatialAudioEnabled={spatialAudioEnabled}
                 spatialAudioMode={spatialAudioMode}
+                lighting={lighting}
                 onPlayToggle={handlePlayToggle}
                 onSeek={handleSeek}
                 onVolumeChange={handleVolumeChange}
@@ -781,6 +952,7 @@ function CinemaApp() {
                 onToggleSpatialAudio={handleToggleSpatialAudio}
                 onSpatialAudioModeChange={handleSpatialAudioModeChange}
                 onQualityChange={handleQualityChange}
+                onLightingChange={handleLightingChange}
               />
             }
             onCopyRoom={handleCopyRoomId}
@@ -791,7 +963,7 @@ function CinemaApp() {
               if (!isChatOpen) setUnreadCount(0);
             }}
             onToggleSettings={() => setIsSettingsOpen(!isSettingsOpen)}
-            onToggleFocus={() => setFocusMode(!focusMode)}
+            onToggleFocus={handleToggleFocus}
             onLeave={handleLeaveTheatre}
             onStandUp={handleStandUp}
             onToggleVoice={handleToggleVoice}
@@ -823,11 +995,13 @@ function CinemaApp() {
             frameMode={frameMode}
             spatialAudioEnabled={spatialAudioEnabled}
             spatialAudioMode={spatialAudioMode}
+            lighting={lighting}
             onLoadMovie={handleLoadMovie}
             onToggleFitMode={handleToggleFitMode}
             onFrameModeChange={handleFrameModeChange}
             onToggleSpatialAudio={handleToggleSpatialAudio}
             onSpatialAudioModeChange={handleSpatialAudioModeChange}
+            onLightingChange={handleLightingChange}
           />
         </>
       )}

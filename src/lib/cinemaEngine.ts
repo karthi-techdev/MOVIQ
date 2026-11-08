@@ -5,8 +5,10 @@ import {
   AudioSpatialMode,
   CameraMode,
   CharacterPreset,
+  LightingState,
   ScreenFrameMode,
   SeatData,
+  SideLightMode,
   UserData,
   Vector3Like
 } from "../types/cinema";
@@ -15,6 +17,7 @@ import {
   AVATAR_PALETTE,
   CHARACTER_PRESETS,
   DEFAULT_CHARACTER,
+  DEFAULT_LIGHTING,
   EMOTE_DURATIONS
 } from "./constants";
 
@@ -55,6 +58,7 @@ export class CinemaSpatialAudio {
   private wetGain: GainNode | null = null;
   private dryGain: GainNode | null = null;
   private masterGain: GainNode | null = null;
+  private limiterNode: DynamicsCompressorNode | null = null;
 
   private mode: AudioSpatialMode = "atmos";
   private isEnabled: boolean = true;
@@ -156,7 +160,7 @@ export class CinemaSpatialAudio {
         this.dryGain.gain.value = 0.95;
 
         this.masterGain = this.ctx.createGain();
-        this.masterGain.gain.value = 1.0;
+        this.masterGain.gain.value = this.masterVolume;
 
         // --- CONNECT AUDIO GRAPH ---
         // Input -> EQ chain -> 3D Screen Panner
@@ -201,8 +205,16 @@ export class CinemaSpatialAudio {
         this.convolverNode.connect(this.wetGain);
         this.wetGain.connect(this.masterGain);
 
-        // Master Output to Speakers / Headphones
-        this.masterGain.connect(this.ctx.destination);
+        // Master Output to Speakers / Headphones with Limiter (Prevents clipping on 150% volume boost)
+        this.limiterNode = this.ctx.createDynamicsCompressor();
+        this.limiterNode.threshold.value = -1.5;
+        this.limiterNode.knee.value = 12;
+        this.limiterNode.ratio.value = 16;
+        this.limiterNode.attack.value = 0.003;
+        this.limiterNode.release.value = 0.25;
+
+        this.masterGain.connect(this.limiterNode);
+        this.limiterNode.connect(this.ctx.destination);
       }
     } catch (e) {
       console.warn("Spatial audio notice:", e);
@@ -322,6 +334,27 @@ export class CinemaSpatialAudio {
     }
   }
 
+  private masterVolume: number = 1.0;
+
+  public setMasterVolume(vol: number) {
+    this.masterVolume = Math.max(0.0, Math.min(1.5, vol));
+    if (this.ctx && this.ctx.state === "suspended") {
+      this.ctx.resume().catch(() => {});
+    }
+    // Perceptual audio boost: 1.0 = 100% (1.0x gain), 1.5 = 150% (2.5x gain boost)
+    const effectiveGain = this.masterVolume <= 1.0
+      ? this.masterVolume
+      : 1.0 + (this.masterVolume - 1.0) * 3.0;
+
+    if (this.masterGain && this.ctx) {
+      try {
+        this.masterGain.gain.setValueAtTime(effectiveGain, this.ctx.currentTime);
+      } catch {
+        this.masterGain.gain.value = effectiveGain;
+      }
+    }
+  }
+
   public resume() {
     if (this.ctx && this.ctx.state === "suspended") {
       this.ctx.resume().catch(() => {});
@@ -378,13 +411,63 @@ export class CinemaEngine {
   public screenMaterial: THREE.MeshBasicMaterial | null = null;
   public screenShaderMaterial: THREE.ShaderMaterial | null = null;
   public screenLight: THREE.PointLight | null = null;
+  public screenStageBounceLight: THREE.PointLight | null = null;
   private videoTexture: THREE.VideoTexture | null = null;
   public defaultScreenTexture: THREE.CanvasTexture | null = null;
   private videoAspect: number = 16 / 9;
   private frameMode: ScreenFrameMode = "2.35:1";
   private fitMode: "fit" | "fill" = "fit";
+  public amoledMode: boolean = true;
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
   private lastVideoTime: number = -1;
+
+  // --- Controllable Lighting & Theater Ambiance ---
+  public lightingState: LightingState = { ...DEFAULT_LIGHTING };
+  public ambientLight: THREE.HemisphereLight | null = null;
+  public downlight: THREE.DirectionalLight | null = null;
+  public boothLight: THREE.PointLight | null = null;
+  public projectorBeam: THREE.SpotLight | null = null;
+
+  // Ceiling lights elements
+  public ceilingLightGroup: THREE.Group = new THREE.Group();
+  public ceilingTubeMeshes: THREE.Mesh[] = [];
+  public ceilingDiffuserMat: THREE.MeshBasicMaterial | null = null;
+
+  // Below screen lights elements
+  public belowScreenLedMat: THREE.MeshBasicMaterial | null = null;
+  public belowScreenGlowMat: THREE.MeshBasicMaterial | null = null;
+
+  // Stair lights elements
+  public stairLedMat: THREE.MeshBasicMaterial | null = null;
+  public stairLedGlowMat: THREE.MeshBasicMaterial | null = null;
+
+  // Side wall neon bars & uniform pass light ambience (zero circular point spots on walls)
+  public sideLightGroup: THREE.Group = new THREE.Group();
+  public sideBarItems: {
+    coreMesh: THREE.Mesh;
+    glowMesh: THREE.Mesh;
+    coreMat: THREE.MeshBasicMaterial;
+    glowMat: THREE.MeshBasicMaterial;
+    z: number;
+    normZ: number;
+  }[] = [];
+
+  // Video Ambilight / Screen bounce elements
+  private videoSampleCanvas: HTMLCanvasElement | null = null;
+  private videoSampleCtx: CanvasRenderingContext2D | null = null;
+  private lastVideoSampleTime: number = 0;
+  private targetVideoBounceColor: THREE.Color = new THREE.Color(0xd0e0ff);
+  private currentVideoBounceColor: THREE.Color = new THREE.Color(0xd0e0ff);
+  private targetVideoBounceIntensity: number = 0;
+  private currentVideoBounceIntensity: number = 0;
+  private videoTainted: boolean = false;
+
+  // Smooth theatrical dimming interpolation states
+  private curCeilingBrightness: number = 1.0;
+  private curStairBrightness: number = 1.0;
+  private curBelowScreenBrightness: number = 1.0;
+  private curSideLightsBrightness: number = 1.0;
+  private curAmbientFactor: number = 1.0;
 
   public isMobileDevice: boolean = false;
 
@@ -534,12 +617,12 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    // Natural ambient dim white cinema projection screen material adapted to theater lighting (plain, smooth)
-    const grad = ctx.createRadialGradient(960, 540, 100, 960, 540, 1150);
-    grad.addColorStop(0, "#73829c"); // Dim matte white catching ambient auditorium light
-    grad.addColorStop(0.4, "#5d6d87"); // Natural soft cinema screen body
-    grad.addColorStop(0.75, "#425068"); // Gentle shadow falloff toward edges
-    grad.addColorStop(1.0, "#2c3647"); // Soft ambient vignette near bezel
+    // Soft natural matte white cinema projection screen (20% reduced from pure white for realistic cinema lighting)
+    const grad = ctx.createRadialGradient(960, 540, 120, 960, 540, 1150);
+    grad.addColorStop(0, "#cccccc");   // 80% white (20% reduced white center)
+    grad.addColorStop(0.45, "#c2c6cf"); // Luminous silver-white matte body
+    grad.addColorStop(0.8, "#aeb5c0");  // Clean soft falloff
+    grad.addColorStop(1.0, "#9aa2b0");  // Soft cinema screen edge near bezel
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
 
@@ -624,8 +707,8 @@ export class CinemaEngine {
       metalness: 0.20
     });
 
-    const stepLedMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
-    const stepLedGlowMat = new THREE.MeshBasicMaterial({
+    this.belowScreenLedMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    this.belowScreenGlowMat = new THREE.MeshBasicMaterial({
       color: 0x2563eb,
       transparent: true,
       opacity: 0.85,
@@ -682,12 +765,12 @@ export class CinemaEngine {
         stageGroup.add(riserMesh);
 
         // Subtle glowing LED safety tread on step nosing
-        const ledStrip = new THREE.Mesh(new THREE.BoxGeometry(len + 0.05, 0.015, 0.03), stepLedMat);
+        const ledStrip = new THREE.Mesh(new THREE.BoxGeometry(len + 0.05, 0.015, 0.03), this.belowScreenLedMat);
         ledStrip.position.set(mid.x, h + 0.008, mid.z + 0.23);
         ledStrip.rotation.y = angle - Math.PI / 2;
         stageGroup.add(ledStrip);
 
-        const ledGlow = new THREE.Mesh(new THREE.BoxGeometry(len + 0.05, 0.04, 0.05), stepLedGlowMat);
+        const ledGlow = new THREE.Mesh(new THREE.BoxGeometry(len + 0.05, 0.04, 0.05), this.belowScreenGlowMat);
         ledGlow.position.copy(ledStrip.position);
         ledGlow.rotation.y = angle - Math.PI / 2;
         stageGroup.add(ledGlow);
@@ -698,12 +781,24 @@ export class CinemaEngine {
   }
 
   private buildCeilingLights() {
-    const ceilingLightGroup = new THREE.Group();
+    this.ceilingLightGroup = new THREE.Group();
     const ceilingY = 14.97; // Flush against suspended ceiling plane at 15.0
 
     // 4 Rows along Z (matching reference photo: Left, Center, Right columns)
     const rowZs = [-12.0, -4.5, 3.5, 11.5];
     const colXs = [-8.5, 0.0, 8.5];
+
+    const isInitialOn = this.lightingState.ceiling;
+    this.ceilingDiffuserMat = new THREE.MeshBasicMaterial({
+      color: isInitialOn ? 0xffffff : 0x000000,
+      transparent: true,
+      opacity: isInitialOn ? 1.0 : 0.0
+    });
+    const bracketMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      roughness: 0.5,
+      metalness: 0.8
+    });
 
     // Load sleek 3D tube light model
     this.gltfLoader.load(
@@ -714,33 +809,35 @@ export class CinemaEngine {
             const mesh = child as THREE.Mesh;
             if (mesh.name === "Object_4") {
               // Glowing white tube diffuser
-              mesh.material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+              mesh.material = this.ceilingDiffuserMat!;
+              this.ceilingTubeMeshes.push(mesh);
             } else {
               // Slim dark bracket
-              mesh.material = new THREE.MeshStandardMaterial({
-                color: 0x0f172a,
-                roughness: 0.5,
-                metalness: 0.8
-              });
+              mesh.material = bracketMat;
             }
           }
         });
 
-        // 4 Rows of 3 columns (increased thickness by 40% in Y and Z, NO circular point light gradient hotspots)
+        // 4 Rows of 3 columns
         rowZs.forEach((z) => {
           colXs.forEach((x) => {
             const light = gltf.scene.clone(true);
             light.scale.set(4.7, 1.4, 1.4);
             light.position.set(x, ceilingY, z);
-            ceilingLightGroup.add(light);
+            this.ceilingLightGroup.add(light);
           });
         });
 
-        // Rear continuous light bar across X above the projection booth (Z = 16.5, thickened by 40%)
+        // Rear continuous light bar across X above the projection booth (Z = 16.5)
         const rearBar = gltf.scene.clone(true);
         rearBar.scale.set(12.5, 1.4, 1.4);
         rearBar.position.set(0, ceilingY, 16.5);
-        ceilingLightGroup.add(rearBar);
+        this.ceilingLightGroup.add(rearBar);
+
+        // If ceiling light is currently off, hide immediately so zero residual outlines show
+        if (!this.lightingState.ceiling) {
+          this.ceilingLightGroup.visible = false;
+        }
       },
       undefined,
       (err) => {
@@ -748,23 +845,13 @@ export class CinemaEngine {
       }
     );
 
-    this.scene.add(ceilingLightGroup);
+    this.ceilingLightGroup.visible = isInitialOn;
+    this.scene.add(this.ceilingLightGroup);
   }
 
   private buildNeonLightBars() {
-    const neonGroup = new THREE.Group();
-
-    // Brilliant crisp pure white center core
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
-    // Sleek electric blue glow casing
-    const glowMat = new THREE.MeshBasicMaterial({
-      color: 0x3b82f6,
-      transparent: true,
-      opacity: 0.75,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false
-    });
+    this.sideLightGroup = new THREE.Group();
+    this.sideBarItems = [];
 
     const createNeonBar = (p1: THREE.Vector3, p2: THREE.Vector3) => {
       const distance = p1.distanceTo(p2);
@@ -774,32 +861,66 @@ export class CinemaEngine {
 
       const bar = new THREE.Group();
 
-      // Outer electric blue glow casing (15% wider)
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0x3b82f6,
+        transparent: true,
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
       const glowGeo = new THREE.CylinderGeometry(0.0518, 0.0518, distance, 12);
       const glow = new THREE.Mesh(glowGeo, glowMat);
       bar.add(glow);
 
-      // Pure white central luminous core (15% wider)
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       const coreGeo = new THREE.CylinderGeometry(0.0207, 0.0207, distance, 12);
       const core = new THREE.Mesh(coreGeo, coreMat);
       bar.add(core);
 
       bar.position.copy(mid);
       bar.quaternion.copy(quat);
-      neonGroup.add(bar);
+      this.sideLightGroup.add(bar);
+
+      const normZ = Math.max(0.0, Math.min(1.0, (mid.z - (-18.2)) / (18.8 - (-18.2))));
+      this.sideBarItems.push({
+        coreMesh: core,
+        glowMesh: glow,
+        coreMat,
+        glowMat,
+        z: mid.z,
+        normZ
+      });
     };
 
     const addJoint = (pos: THREE.Vector3) => {
       const jointGroup = new THREE.Group();
       jointGroup.position.copy(pos);
 
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: 0x3b82f6,
+        transparent: true,
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
       const glowSphere = new THREE.Mesh(new THREE.SphereGeometry(0.0552, 12, 12), glowMat);
       jointGroup.add(glowSphere);
 
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       const coreSphere = new THREE.Mesh(new THREE.SphereGeometry(0.023, 12, 12), coreMat);
       jointGroup.add(coreSphere);
 
-      neonGroup.add(jointGroup);
+      this.sideLightGroup.add(jointGroup);
+
+      const normZ = Math.max(0.0, Math.min(1.0, (pos.z - (-18.2)) / (18.8 - (-18.2))));
+      this.sideBarItems.push({
+        coreMesh: coreSphere,
+        glowMesh: glowSphere,
+        coreMat,
+        glowMat,
+        z: pos.z,
+        normZ
+      });
     };
 
     // Positioned at X = +-15.52 (8cm in front of solid wall inner face at +-15.60)
@@ -822,16 +943,11 @@ export class CinemaEngine {
       createNeonBar(p7, p8);
 
       [p0, p1, p2, p3, p4, p5, p6, p7, p8].forEach((pt) => addJoint(pt));
-
-      // Dynamic blue neon point lights along the side wall to illuminate the room
-      [-14, -6, 2, 10, 17].forEach((zLight) => {
-        const pl = new THREE.PointLight(0x3b82f6, 4.0, 24, 1.2);
-        pl.position.set(xSide * 0.94, 6.5, zLight);
-        neonGroup.add(pl);
-      });
     });
 
-    this.scene.add(neonGroup);
+    // Uniform pass light ambience is handled smoothly by auditorium ambient fill (NO circular point hotspots on walls)
+    this.sideLightGroup.visible = this.lightingState.sideLights !== "off";
+    this.scene.add(this.sideLightGroup);
   }
 
   private buildProjectionBooth() {
@@ -882,16 +998,16 @@ export class CinemaEngine {
     boothGroup.add(lensHalo);
 
     // Glowing projection booth interior light
-    const boothLight = new THREE.PointLight(0xa5f3fc, 8.0, 35, 1.0);
-    boothLight.position.set(0, 11.0, 18.42);
-    boothGroup.add(boothLight);
+    this.boothLight = new THREE.PointLight(0xa5f3fc, 8.0, 35, 1.0);
+    this.boothLight.position.set(0, 11.0, 18.42);
+    boothGroup.add(this.boothLight);
 
     // Cinema projector light beam shining from booth directly onto the screen
-    const projectorBeam = new THREE.SpotLight(0xcfd8ff, 12.0, 55, Math.PI / 9, 0.35, 0.8);
-    projectorBeam.position.set(0, 11.0, 18.32);
-    projectorBeam.target.position.set(0, 7.30, -18.2);
-    boothGroup.add(projectorBeam);
-    boothGroup.add(projectorBeam.target);
+    this.projectorBeam = new THREE.SpotLight(0xcfd8ff, 12.0, 55, Math.PI / 9, 0.35, 0.8);
+    this.projectorBeam.position.set(0, 11.0, 18.32);
+    this.projectorBeam.target.position.set(0, 7.30, -18.2);
+    boothGroup.add(this.projectorBeam);
+    boothGroup.add(this.projectorBeam.target);
 
     this.scene.add(boothGroup);
   }
@@ -915,11 +1031,16 @@ export class CinemaEngine {
     this.defaultScreenTexture = this.createScreenStandbyTexture();
 
     // Precision Cinema Screen Shader with Aspect Ratio Fitting (Letterbox & Pillarbox)
+    // Engineered for Balanced AMOLED Infinite Contrast & Clean Blacks (Over-blacking reduced by 40% for natural shadow details)
     this.screenShaderMaterial = new THREE.ShaderMaterial({
       uniforms: {
         map: { value: this.defaultScreenTexture },
         uRepeat: { value: new THREE.Vector2(1.0, 1.0) },
-        uOffset: { value: new THREE.Vector2(0.0, 0.0) }
+        uOffset: { value: new THREE.Vector2(0.0, 0.0) },
+        uIsVideo: { value: 0.0 }, // 0.0 for idle standby white screen, 1.0 for active video playback
+        uBlackLevel: { value: 0.027 }, // Reduced 40% (from 0.045) to preserve dark shadow details
+        uContrast: { value: 1.06 },   // Balanced AMOLED punch without crushing dark shades (reduced 40% from 1.10)
+        uSaturation: { value: 1.05 }  // Natural vibrant AMOLED color reproduction
       },
       vertexShader: `
         varying vec2 vUv;
@@ -929,19 +1050,50 @@ export class CinemaEngine {
         }
       `,
       fragmentShader: `
-        #include <common>
         uniform sampler2D map;
         uniform vec2 uRepeat;
         uniform vec2 uOffset;
+        uniform float uIsVideo;
+        uniform float uBlackLevel;
+        uniform float uContrast;
+        uniform float uSaturation;
         varying vec2 vUv;
+
         void main() {
           vec2 uv = (vUv - uOffset) / uRepeat;
-          if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-            gl_FragColor = vec4(0.012, 0.012, 0.02, 1.0); // Cinematic deep black pillarbox / letterbox
-          } else {
-            gl_FragColor = texture2D(map, uv);
+
+          // When video is playing, render true inky 0.0 black letterbox & pillarbox bars (OLED pixels completely 100% OFF)
+          if (uIsVideo > 0.5 && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)) {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
           }
-          #include <colorspace_fragment>
+
+          vec4 tex = texture2D(map, clamp(uv, 0.0, 1.0));
+
+          if (uIsVideo > 0.5) {
+            // --- BALANCED AMOLED CONTRAST ENGINE (OVER-BLACKING REDUCED BY 40%) ---
+            // 1. Black Floor Remap (reduced 40% from 0.045 to 0.027 to prevent clipping dark shadow textures)
+            vec3 c = max(vec3(0.0), (tex.rgb - vec3(uBlackLevel)) / (1.0 - uBlackLevel));
+
+            // 2. Smooth Hermite S-Curve shadow depth (reduced 40% from 0.55 down to 0.33)
+            vec3 sCurve = smoothstep(0.0, 1.0, c);
+            c = mix(c, sCurve, 0.33);
+
+            // 3. Dynamic contrast calibration (reduced 40% from 1.10 to 1.06)
+            c = pow(c, vec3(uContrast));
+
+            // 4. Vibrant AMOLED color reproduction
+            float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+            c = mix(vec3(luma), c, uSaturation);
+
+            // 5. 40% reduction of over-blacking: restores 40% natural source shadow detail
+            c = mix(c, tex.rgb, 0.40);
+
+            gl_FragColor = vec4(c, tex.a);
+          } else {
+            // Idle Standby: display authentic natural white cinema projection screen as-is
+            gl_FragColor = tex;
+          }
         }
       `
     });
@@ -950,11 +1102,11 @@ export class CinemaEngine {
     this.screenMesh.position.set(0, 7.30, -18.2);
     this.scene.add(this.screenMesh);
 
-    // Ultra-thin Sleek Black Cinema Bezel Frame around the curved screen
+    // Ultra-thin Sleek Inky Black Cinema Bezel Frame around the curved screen (melts seamlessly into AMOLED blacks)
     const borderMat = new THREE.MeshStandardMaterial({
-      color: 0x05070c,
-      roughness: 0.85,
-      metalness: 0.2
+      color: 0x010204,
+      roughness: 0.95,
+      metalness: 0.05
     });
 
     // Thin bezel: 0.06m (6 cm) instead of 0.45m (45 cm)
@@ -980,6 +1132,11 @@ export class CinemaEngine {
     this.screenLight = new THREE.PointLight(0xf1f5f9, 0.0, 45, 0.8);
     this.screenLight.position.set(0, 7.30, -15.5);
     this.scene.add(this.screenLight);
+
+    // Dynamic wide stage bounce light casting authentic screen ambilight onto stage, floor and front rows
+    this.screenStageBounceLight = new THREE.PointLight(0xf1f5f9, 0.0, 26, 1.0);
+    this.screenStageBounceLight.position.set(0, 1.4, -14.8);
+    this.scene.add(this.screenStageBounceLight);
   }
 
   public updateVideoAspectRatio(videoWidth: number, videoHeight: number) {
@@ -1098,6 +1255,7 @@ export class CinemaEngine {
   public showVideoTexture() {
     if (this.screenShaderMaterial && this.videoTexture) {
       this.screenShaderMaterial.uniforms.map.value = this.videoTexture;
+      this.screenShaderMaterial.uniforms.uIsVideo.value = 1.0;
       if (this.screenLight) {
         this.screenLight.color.setHex(0xe2e8f0);
         this.screenLight.intensity = 3.5;
@@ -1114,11 +1272,474 @@ export class CinemaEngine {
   public showStandbyTexture() {
     if (this.screenShaderMaterial && this.defaultScreenTexture) {
       this.screenShaderMaterial.uniforms.map.value = this.defaultScreenTexture;
+      this.screenShaderMaterial.uniforms.uIsVideo.value = 0.0;
       this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
       if (this.screenLight) {
         this.screenLight.intensity = 0.0;
       }
+      if (this.screenStageBounceLight) {
+        this.screenStageBounceLight.intensity = 0.0;
+      }
+      this.targetVideoBounceIntensity = 0.0;
+    }
+  }
+
+  public setAmoledMode(_enabled?: boolean) {
+    this.amoledMode = true;
+    if (this.screenShaderMaterial && this.screenShaderMaterial.uniforms.uIsVideo) {
+      // AMOLED processing is automatically active whenever a video is playing
+    }
+  }
+
+  public getAmoledMode(): boolean {
+    return true;
+  }
+
+  public setVolume(vol: number) {
+    this.spatialAudio.setMasterVolume(vol);
+  }
+
+  // --- Controllable Lighting & Theater Ambiance Methods ---
+
+  public setLightingState(state: Partial<LightingState>) {
+    if (typeof state.ceiling === "boolean") {
+      this.lightingState.ceiling = state.ceiling;
+      if (!state.ceiling) {
+        if (this.ceilingDiffuserMat) {
+          this.ceilingDiffuserMat.color.setRGB(0, 0, 0);
+          this.ceilingDiffuserMat.opacity = 0.0;
+        }
+        if (this.ceilingLightGroup) {
+          this.ceilingLightGroup.visible = false;
+        }
+        this.curCeilingBrightness = 0.0;
+      } else {
+        if (this.ceilingLightGroup) {
+          this.ceilingLightGroup.visible = true;
+        }
+      }
+    }
+
+    if (typeof state.stairs === "boolean") {
+      this.lightingState.stairs = state.stairs;
+      if (!state.stairs) this.curStairBrightness = 0.0;
+    }
+
+    if (typeof state.belowScreen === "boolean") {
+      this.lightingState.belowScreen = state.belowScreen;
+      if (!state.belowScreen) this.curBelowScreenBrightness = 0.0;
+    }
+
+    const validSideModes: SideLightMode[] = [
+      "on",
+      "off",
+      "wave",
+      "hero_entry",
+      "pulse",
+      "chase",
+      "strobe",
+      "rainbow",
+      "fire",
+      "ambilight_sync"
+    ];
+    if (state.sideLights && validSideModes.includes(state.sideLights)) {
+      this.lightingState.sideLights = state.sideLights;
+      if (state.sideLights === "off") {
+        if (this.sideLightGroup) {
+          this.sideLightGroup.visible = false;
+        }
+        this.curSideLightsBrightness = 0.0;
+        this.sideBarItems.forEach((item) => {
+          item.glowMat.opacity = 0.0;
+          item.coreMat.color.setRGB(0, 0, 0);
+        });
+      } else {
+        if (this.sideLightGroup) {
+          this.sideLightGroup.visible = true;
+        }
+      }
+    }
+  }
+
+  public getLightingState(): LightingState {
+    return { ...this.lightingState };
+  }
+
+  private sampleVideoAmbient() {
+    if (!this.videoElement || this.videoElement.paused || this.videoElement.readyState < 2 || this.videoTainted) {
+      this.targetVideoBounceIntensity = 0;
+      return;
+    }
+
+    if (!this.videoSampleCanvas) {
+      this.videoSampleCanvas = document.createElement("canvas");
+      this.videoSampleCanvas.width = 16;
+      this.videoSampleCanvas.height = 9;
+      this.videoSampleCtx = this.videoSampleCanvas.getContext("2d", { willReadFrequently: true });
+    }
+
+    if (!this.videoSampleCtx) return;
+
+    try {
+      this.videoSampleCtx.drawImage(this.videoElement, 0, 0, 16, 9);
+      const imgData = this.videoSampleCtx.getImageData(0, 0, 16, 9);
+      const data = imgData.data;
+
+      let totalR = 0;
+      let totalG = 0;
+      let totalB = 0;
+      const count = 16 * 9;
+
+      for (let i = 0; i < data.length; i += 4) {
+        totalR += data[i];
+        totalG += data[i + 1];
+        totalB += data[i + 2];
+      }
+
+      const avgR = totalR / count;
+      const avgG = totalG / count;
+      const avgB = totalB / count;
+      const luminance = (0.299 * avgR + 0.587 * avgG + 0.114 * avgB) / 255;
+
+      if (luminance < 0.02) {
+        this.targetVideoBounceIntensity = 0.0;
+      } else {
+        // Boost saturation slightly so vibrant cinema colors pop naturally in the auditorium
+        const rNorm = avgR / 255;
+        const gNorm = avgG / 255;
+        const bNorm = avgB / 255;
+        const maxC = Math.max(rNorm, gNorm, bNorm);
+        const minC = Math.min(rNorm, gNorm, bNorm);
+        const satBoost = maxC - minC > 0.04 ? 1.3 : 1.0;
+
+        const boostR = Math.min(1.0, rNorm * satBoost);
+        const boostG = Math.min(1.0, gNorm * satBoost);
+        const boostB = Math.min(1.0, bNorm * satBoost);
+
+        this.targetVideoBounceColor.setRGB(boostR, boostG, boostB);
+
+        // When the theater is dimmed or blackout, screen ambient bounce is dramatically more intense and realistic!
+        const darkRoomMultiplier = 1.0 + (1.0 - this.curAmbientFactor) * 2.8;
+        this.targetVideoBounceIntensity = Math.min(10.0, (luminance * 5.2 + 0.9) * darkRoomMultiplier);
+      }
+    } catch {
+      // Graceful fallback for cross-origin unproxied videos
+      this.videoTainted = true;
+      this.targetVideoBounceColor.setHex(0xe2e8f0);
+      this.targetVideoBounceIntensity = 3.2;
+    }
+  }
+
+  public updateLightingAndAmbilight(delta: number) {
+    // 1. Sample video ambient (throttled every 60ms for 0% CPU overhead)
+    const nowMs = performance.now();
+    if (nowMs - this.lastVideoSampleTime >= 60) {
+      this.lastVideoSampleTime = nowMs;
+      this.sampleVideoAmbient();
+    }
+
+    // 2. Smoothly interpolate video ambilight color & intensity
+    this.currentVideoBounceColor.lerp(this.targetVideoBounceColor, 10.0 * delta);
+    this.currentVideoBounceIntensity = THREE.MathUtils.damp(
+      this.currentVideoBounceIntensity,
+      this.targetVideoBounceIntensity,
+      8.0,
+      delta
+    );
+
+    if (this.screenLight) {
+      this.screenLight.color.copy(this.currentVideoBounceColor);
+      this.screenLight.intensity = this.currentVideoBounceIntensity;
+    }
+    if (this.screenStageBounceLight) {
+      this.screenStageBounceLight.color.copy(this.currentVideoBounceColor);
+      this.screenStageBounceLight.intensity = this.currentVideoBounceIntensity * 0.72;
+    }
+
+    // 3. Smoothly damp individual fixture brightnesses
+    const targetCeil = this.lightingState.ceiling ? 1.0 : 0.0;
+    const targetStairs = this.lightingState.stairs ? 1.0 : 0.0;
+    const targetBelow = this.lightingState.belowScreen ? 1.0 : 0.0;
+    const targetSide = this.lightingState.sideLights === "off" ? 0.0 : 1.0;
+
+    this.curCeilingBrightness = THREE.MathUtils.damp(this.curCeilingBrightness, targetCeil, 6.0, delta);
+    this.curStairBrightness = THREE.MathUtils.damp(this.curStairBrightness, targetStairs, 6.0, delta);
+    this.curBelowScreenBrightness = THREE.MathUtils.damp(this.curBelowScreenBrightness, targetBelow, 6.0, delta);
+    this.curSideLightsBrightness = THREE.MathUtils.damp(this.curSideLightsBrightness, targetSide, 6.0, delta);
+
+    // Apply ceiling tube fixtures (100% pitch black when off, zero residual glow or outlines)
+    if (this.ceilingDiffuserMat) {
+      if (!this.lightingState.ceiling || this.curCeilingBrightness <= 0.015) {
+        this.ceilingDiffuserMat.color.setRGB(0, 0, 0);
+        this.ceilingDiffuserMat.opacity = 0.0;
+      } else {
+        const cVal = Math.max(0.0, this.curCeilingBrightness);
+        this.ceilingDiffuserMat.color.setRGB(cVal, cVal, cVal);
+        this.ceilingDiffuserMat.opacity = Math.min(1.0, this.curCeilingBrightness);
+      }
+    }
+    if (this.ceilingLightGroup) {
+      this.ceilingLightGroup.visible = this.lightingState.ceiling && this.curCeilingBrightness > 0.015;
+    }
+
+    // Apply stadium stair lights
+    if (this.stairLedMat && this.stairLedGlowMat) {
+      const stairColor = new THREE.Color(0x080f1d).lerp(new THREE.Color(0x38bdf8), this.curStairBrightness);
+      this.stairLedMat.color.copy(stairColor);
+      this.stairLedGlowMat.opacity = 0.85 * this.curStairBrightness;
+    }
+
+    // Apply below-screen stage lights
+    if (this.belowScreenLedMat && this.belowScreenGlowMat) {
+      const belowColor = new THREE.Color(0x080f1d).lerp(new THREE.Color(0x38bdf8), this.curBelowScreenBrightness);
+      this.belowScreenLedMat.color.copy(belowColor);
+      this.belowScreenGlowMat.opacity = 0.85 * this.curBelowScreenBrightness;
+    }
+
+    // 4. Side Lights: Cinematic Animations Engine (Hero Entry, Wave, Pulse, Chase, Strobe, Chroma, Fire, Ambilight)
+    const sideMode = this.lightingState.sideLights;
+    const isOff = sideMode === "off";
+    const elapsed = this.clock.getElapsedTime();
+
+    const dominantSideColor = new THREE.Color(0x38bdf8);
+    let dominantSideIntensity = 0.0;
+
+    if (this.sideBarItems.length > 0) {
+      if (isOff || this.curSideLightsBrightness <= 0.005) {
+        this.sideBarItems.forEach((item) => {
+          item.glowMat.opacity = 0.0;
+          item.coreMat.color.setRGB(0, 0, 0);
+        });
+        dominantSideIntensity = 0.0;
+      } else {
+        dominantSideIntensity = 2.4 * this.curSideLightsBrightness;
+
+        switch (sideMode) {
+          case "hero_entry": {
+            // EPIC HERO ENTRY FANFARE:
+            // High-octane burst strobe pulses + gold/amber radiant power surge moving from screen to back
+            const t = elapsed * 4.5;
+            const strobeBurst = (Math.sin(t * 8.0) > 0.45) ? 1.0 : 0.25;
+            const heroGold = new THREE.Color(0xf59e0b);
+            const heroCyan = new THREE.Color(0x38bdf8);
+
+            this.sideBarItems.forEach((item) => {
+              const itemWave = Math.sin(t * 2.2 - item.normZ * Math.PI * 3.0);
+              const itemFactor = Math.pow(Math.max(0.0, itemWave), 1.6);
+              const itemEnergy = Math.min(1.0, 0.35 * strobeBurst + 0.65 * itemFactor + 0.15);
+              const itemGlow = Math.min(1.0, (0.45 + 0.55 * itemEnergy) * this.curSideLightsBrightness);
+              const itemColor = heroGold.clone().lerp(heroCyan, (Math.sin(t * 1.5 + item.normZ * 4.0) * 0.5 + 0.5));
+
+              item.glowMat.color.copy(itemColor);
+              item.glowMat.opacity = itemGlow;
+
+              const coreLight = Math.min(1.0, (0.3 + 0.7 * itemEnergy) * this.curSideLightsBrightness);
+              const coreColor = new THREE.Color(0xffffff).lerp(itemColor, 0.25).multiplyScalar(coreLight);
+              item.coreMat.color.copy(coreColor);
+            });
+
+            dominantSideColor.copy(heroGold);
+            dominantSideIntensity = 4.2 * (0.5 + 0.5 * strobeBurst) * this.curSideLightsBrightness;
+            break;
+          }
+
+          case "wave": {
+            // Kinetic travelling sine wave from proscenium to back
+            const baseBlue = new THREE.Color(0x38bdf8);
+            dominantSideColor.copy(baseBlue);
+            dominantSideIntensity = 2.4 * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              const wavePhase = Math.sin(elapsed * 3.4 - item.z * 0.22);
+              const waveFactor = 0.12 + 0.88 * Math.pow(wavePhase * 0.5 + 0.5, 1.8);
+              item.glowMat.color.copy(baseBlue);
+              item.glowMat.opacity = 0.85 * waveFactor * this.curSideLightsBrightness;
+              const coreVal = (0.15 + 0.85 * waveFactor) * this.curSideLightsBrightness;
+              item.coreMat.color.setRGB(coreVal, coreVal, coreVal);
+            });
+            break;
+          }
+
+          case "pulse": {
+            // Slow, deep, atmospheric cinema breathing
+            const breathe = Math.pow(Math.sin(elapsed * 2.0) * 0.5 + 0.5, 2.2);
+            const magenta = new THREE.Color(0xec4899);
+            const cyan = new THREE.Color(0x38bdf8);
+            const pulseColor = magenta.clone().lerp(cyan, breathe);
+            dominantSideColor.copy(pulseColor);
+            dominantSideIntensity = (1.2 + 2.2 * breathe) * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              item.glowMat.color.copy(pulseColor);
+              item.glowMat.opacity = (0.2 + 0.78 * breathe) * this.curSideLightsBrightness;
+              const coreBright = (0.25 + 0.75 * breathe) * this.curSideLightsBrightness;
+              item.coreMat.color.copy(new THREE.Color(0xffffff).multiplyScalar(coreBright));
+            });
+            break;
+          }
+
+          case "chase": {
+            // High-speed Laser Runner tracer bouncing along the zigzag
+            const runnerNorm = ((elapsed * 0.7) % 1.0);
+            const runnerZ = runnerNorm * 37.0 - 18.2;
+            const laserCyan = new THREE.Color(0x06b6d4);
+            dominantSideColor.copy(laserCyan);
+            dominantSideIntensity = 2.6 * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              const dist = Math.abs(item.z - runnerZ);
+              const headFactor = Math.exp(-Math.pow(dist / 3.2, 2));
+              const trail = (item.z < runnerZ && runnerZ - item.z < 9.0) ? (1.0 - (runnerZ - item.z) / 9.0) * 0.4 : 0.0;
+              const intensity = Math.min(1.0, headFactor + trail);
+
+              item.glowMat.color.copy(laserCyan);
+              item.glowMat.opacity = (0.1 + 0.9 * intensity) * this.curSideLightsBrightness;
+              const coreVal = (0.12 + 0.88 * intensity) * this.curSideLightsBrightness;
+              item.coreMat.color.setRGB(coreVal, coreVal, coreVal);
+            });
+            break;
+          }
+
+          case "strobe": {
+            // Action punch beat strobe: rapid flash sequence
+            const flashTick = Math.floor(elapsed * 12.0) % 4;
+            const isFlash = flashTick === 0 || flashTick === 1;
+            const strobeVal = isFlash ? 1.0 : 0.08;
+            const strobeColor = new THREE.Color(isFlash ? 0xffffff : 0xef4444);
+            dominantSideColor.copy(strobeColor);
+            dominantSideIntensity = (isFlash ? 4.5 : 0.4) * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              item.glowMat.color.copy(strobeColor);
+              item.glowMat.opacity = (isFlash ? 0.95 : 0.12) * this.curSideLightsBrightness;
+              item.coreMat.color.copy(new THREE.Color(0xffffff).multiplyScalar(strobeVal * this.curSideLightsBrightness));
+            });
+            break;
+          }
+
+          case "rainbow": {
+            // Cyberpunk Chroma: smooth chromatic spectrum wave
+            const centralHue = (elapsed * 0.18) % 1.0;
+            dominantSideColor.setHSL(centralHue, 1.0, 0.55);
+            dominantSideIntensity = 2.5 * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              const itemHue = (elapsed * 0.18 + item.normZ * 0.85) % 1.0;
+              const itemCol = new THREE.Color().setHSL(itemHue, 1.0, 0.55);
+              item.glowMat.color.copy(itemCol);
+              item.glowMat.opacity = 0.82 * this.curSideLightsBrightness;
+              item.coreMat.color.copy(new THREE.Color(0xffffff).lerp(itemCol, 0.35).multiplyScalar(this.curSideLightsBrightness));
+            });
+            break;
+          }
+
+          case "fire": {
+            // Organic inferno flame ripple
+            const flameRed = new THREE.Color(0xdc2626);
+            const flameAmber = new THREE.Color(0xf97316);
+            const flameYellow = new THREE.Color(0xfef08a);
+            dominantSideColor.copy(flameAmber);
+            dominantSideIntensity = 2.8 * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              const flameNoise = Math.sin(elapsed * 8.0 + item.z * 0.7) * 0.45 + Math.sin(elapsed * 15.0 + item.z * 1.6) * 0.35 + 0.5;
+              const normalizedNoise = Math.max(0.0, Math.min(1.0, flameNoise));
+              const fireCol = normalizedNoise < 0.5
+                ? flameRed.clone().lerp(flameAmber, normalizedNoise * 2.0)
+                : flameAmber.clone().lerp(flameYellow, (normalizedNoise - 0.5) * 2.0);
+
+              item.glowMat.color.copy(fireCol);
+              item.glowMat.opacity = (0.35 + 0.65 * normalizedNoise) * this.curSideLightsBrightness;
+              const coreBright = (0.3 + 0.7 * normalizedNoise) * this.curSideLightsBrightness;
+              item.coreMat.color.copy(flameYellow.clone().multiplyScalar(coreBright));
+            });
+            break;
+          }
+
+          case "ambilight_sync": {
+            // Video-reactive: pulse and tint with the live screen colors
+            const movieColor = this.currentVideoBounceIntensity > 0.1 ? this.currentVideoBounceColor : new THREE.Color(0x38bdf8);
+            dominantSideColor.copy(movieColor);
+            dominantSideIntensity = Math.min(4.0, (this.currentVideoBounceIntensity * 0.6 + 1.2)) * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              const itemWave = Math.sin(elapsed * 2.5 - item.normZ * 4.0) * 0.25 + 0.75;
+              item.glowMat.color.copy(movieColor);
+              item.glowMat.opacity = Math.min(1.0, (0.3 + 0.7 * itemWave)) * this.curSideLightsBrightness;
+              const coreCol = new THREE.Color(0xffffff).lerp(movieColor, 0.4).multiplyScalar(this.curSideLightsBrightness * itemWave);
+              item.coreMat.color.copy(coreCol);
+            });
+            break;
+          }
+
+          case "on":
+          default: {
+            // Solid crisp cinema neon
+            const steadyBlue = new THREE.Color(0x38bdf8);
+            dominantSideColor.copy(steadyBlue);
+            dominantSideIntensity = 2.4 * this.curSideLightsBrightness;
+
+            this.sideBarItems.forEach((item) => {
+              item.glowMat.color.copy(steadyBlue);
+              item.glowMat.opacity = 0.75 * this.curSideLightsBrightness;
+              const coreVal = 0.08 + 0.92 * this.curSideLightsBrightness;
+              item.coreMat.color.setRGB(coreVal, coreVal, coreVal);
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // Control side light group visibility
+    if (this.sideLightGroup) {
+      this.sideLightGroup.visible = !isOff && this.curSideLightsBrightness > 0.01;
+    }
+
+    // 5. Theater Dimming Factor (overall ambient room brightness)
+    // Ceiling: 38%, Side Lights: 34%, Below screen: 14%, Stairs: 14%
+    const sideContrib = isOff ? 0.0 : 0.34;
+    const targetDimFactor =
+      (this.lightingState.ceiling ? 0.38 : 0.0) +
+      sideContrib +
+      (this.lightingState.stairs ? 0.14 : 0.0) +
+      (this.lightingState.belowScreen ? 0.14 : 0.0);
+
+    this.curAmbientFactor = THREE.MathUtils.damp(this.curAmbientFactor, targetDimFactor, 6.0, delta);
+
+    if (this.ambientLight) {
+      const minAmbient = 0.07;
+      const maxAmbient = 1.55;
+      this.ambientLight.intensity = minAmbient + (maxAmbient - minAmbient) * this.curAmbientFactor;
+
+      // Auditorium Pass Light Ambience (Smooth, even theater wash with ZERO circular hotspots)
+      const baseBlue = new THREE.Color(0x3b82f6);
+      const targetSky = baseBlue.clone();
+
+      if (!isOff && this.curSideLightsBrightness > 0.01) {
+        targetSky.lerp(dominantSideColor, Math.min(1.0, this.curSideLightsBrightness * 0.85));
+      }
+
+      if (this.currentVideoBounceIntensity > 0.25 && this.curAmbientFactor < 0.65) {
+        const videoInfluence = (1.0 - this.curAmbientFactor) * Math.min(0.65, this.currentVideoBounceIntensity / 4.0);
+        targetSky.lerp(this.currentVideoBounceColor, videoInfluence);
+      }
+
+      this.ambientLight.color.lerp(targetSky, 10.0 * delta);
+      this.ambientLight.groundColor.copy(this.ambientLight.color).multiplyScalar(0.24);
+    }
+
+    if (this.downlight) {
+      // Overhead directional downlight powered by ceiling tube fixtures
+      const targetDown = this.lightingState.ceiling ? 1.15 * this.curCeilingBrightness : 0.0;
+      this.downlight.intensity = THREE.MathUtils.damp(this.downlight.intensity, targetDown, 7.0, delta);
+    }
+
+    if (this.boothLight) {
+      const minBooth = 1.5;
+      const maxBooth = 8.0;
+      this.boothLight.intensity = minBooth + (maxBooth - minBooth) * this.curAmbientFactor;
     }
   }
 
@@ -1205,22 +1826,17 @@ export class CinemaEngine {
   // --- Cinematic Multiplex Lighting ---
 
   private setupLighting() {
-    // Rich royal blue ambient fill
-    const ambient = new THREE.HemisphereLight(0x3b82f6, 0x111c38, 1.6);
-    this.scene.add(ambient);
+    // Rich royal blue ambient fill (HemisphereLight provides smooth, uniform illumination with zero hotspots)
+    this.ambientLight = new THREE.HemisphereLight(0x3b82f6, 0x111c38, 1.6);
+    this.scene.add(this.ambientLight);
 
     // Soft overhead downlight casting gentle shadows on seats
-    const downlight = new THREE.DirectionalLight(0x93c5fd, 1.15);
-    downlight.position.set(0, 14.0, 3.5);
-    downlight.castShadow = true;
-    downlight.shadow.mapSize.width = 1024;
-    downlight.shadow.mapSize.height = 1024;
-    this.scene.add(downlight);
-
-    // Overhead blue bounce from the ceiling
-    const ceilingBounce = new THREE.PointLight(0x3b82f6, 7.5, 45, 0.6);
-    ceilingBounce.position.set(0, 12.0, 4.0);
-    this.scene.add(ceilingBounce);
+    this.downlight = new THREE.DirectionalLight(0x93c5fd, 1.15);
+    this.downlight.position.set(0, 14.0, 3.5);
+    this.downlight.castShadow = true;
+    this.downlight.shadow.mapSize.width = 1024;
+    this.downlight.shadow.mapSize.height = 1024;
+    this.scene.add(this.downlight);
   }
 
   // --- Stadium Seating & Glowing Blue Stairways (18 Rows = 1,440 Seats Capacity) ---
@@ -1237,8 +1853,8 @@ export class CinemaEngine {
       metalness: 0.02
     });
 
-    const stairLedMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
-    const stairLedGlowMat = new THREE.MeshBasicMaterial({
+    this.stairLedMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    this.stairLedGlowMat = new THREE.MeshBasicMaterial({
       color: 0x2563eb,
       transparent: true,
       opacity: 0.85,
@@ -1320,11 +1936,11 @@ export class CinemaEngine {
           noseTrim.position.set(stairX, stepY + 0.008, stepZ + stepD / 2 - 0.025);
           stadiumGroup.add(noseTrim);
 
-          const ledStrip = new THREE.Mesh(new THREE.BoxGeometry(stepWidth - 0.04, 0.02, 0.03), stairLedMat);
+          const ledStrip = new THREE.Mesh(new THREE.BoxGeometry(stepWidth - 0.04, 0.02, 0.03), this.stairLedMat);
           ledStrip.position.set(stairX, stepY + 0.01, stepZ + stepD / 2);
           stadiumGroup.add(ledStrip);
 
-          const ledHalo = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.05, 0.05), stairLedGlowMat);
+          const ledHalo = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, 0.05, 0.05), this.stairLedGlowMat);
           ledHalo.position.copy(ledStrip.position);
           stadiumGroup.add(ledHalo);
         }
@@ -1343,7 +1959,7 @@ export class CinemaEngine {
       stadiumGroup.add(stepM);
 
       [-7.08, 7.08].forEach((ax) => {
-        const led = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.02, 0.03), stairLedMat);
+        const led = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.02, 0.03), this.stairLedMat);
         led.position.set(ax, fs.y + 0.01, fs.z + fs.d / 2);
         stadiumGroup.add(led);
       });
@@ -2679,6 +3295,7 @@ export class CinemaEngine {
       this.videoTexture.needsUpdate = true;
     }
 
+    this.updateLightingAndAmbilight(delta);
     this.spatialAudio.updateListener(this.camera);
 
     if (this.renderer && this.scene && this.camera) {
@@ -2800,6 +3417,15 @@ export class CinemaEngine {
       return;
     }
 
+    // When character is seated: do NOT display seat number hover tooltips or change cursor
+    if (this.currentSeatIndex !== null) {
+      document.body.style.cursor = "default";
+      if (this.callbacks.onSeatHover) {
+        this.callbacks.onSeatHover(null);
+      }
+      return;
+    }
+
     // Hover detection over seats
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -2838,6 +3464,11 @@ export class CinemaEngine {
     this.isPointerDown = false;
 
     if (!this.hasDragged) {
+      // Character is seated: do NOT allow switching seats while seated (user must click Stand Up first)
+      if (this.currentSeatIndex !== null) {
+        return;
+      }
+
       const rect = this.renderer.domElement.getBoundingClientRect();
       this.mouseVec.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       this.mouseVec.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -3029,6 +3660,17 @@ export class CinemaEngine {
     this.rowPlaqueTextureCache.clear();
 
     this.spatialAudio.destroy();
+
+    this.videoSampleCanvas = null;
+    this.videoSampleCtx = null;
+    this.sideBarItems = [];
+    this.ceilingTubeMeshes = [];
+
+    if (this.ceilingDiffuserMat) this.ceilingDiffuserMat.dispose();
+    if (this.stairLedMat) this.stairLedMat.dispose();
+    if (this.stairLedGlowMat) this.stairLedGlowMat.dispose();
+    if (this.belowScreenLedMat) this.belowScreenLedMat.dispose();
+    if (this.belowScreenGlowMat) this.belowScreenGlowMat.dispose();
 
     if (this.videoTexture) {
       this.videoTexture.dispose();

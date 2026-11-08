@@ -1,4 +1,4 @@
-import { CharacterPreset, MovieState } from "../types/cinema";
+import { CharacterPreset, LightingState, MovieState, SideLightMode } from "../types/cinema";
 
 export const SHARED_ANIM_MAP: Record<string, string> = {
   idle: "Idle",
@@ -213,6 +213,13 @@ export const DEFAULT_MOVIE: MovieState = {
   updatedAt: Date.now()
 };
 
+export const DEFAULT_LIGHTING: LightingState = {
+  ceiling: true,
+  stairs: true,
+  belowScreen: true,
+  sideLights: "on"
+};
+
 export const EMOTE_DURATIONS: Record<string, number> = {
   cheer: 2200,
   clap: 2200,
@@ -221,4 +228,96 @@ export const EMOTE_DURATIONS: Record<string, number> = {
   talk: 3500,
   turn_360: 3600
 };
+
+export interface SideLightAnimationMeta {
+  id: SideLightMode;
+  name: string;
+  badge: string;
+  iconName: string;
+  desc: string;
+  color: string;
+}
+
+export const SIDE_LIGHT_ANIMATIONS: SideLightAnimationMeta[] = [
+  {
+    id: "hero_entry",
+    name: "Hero Entry",
+    badge: "EPIC ENTRY",
+    iconName: "hero_entry",
+    desc: "Gold & electric cyan fanfare strobe burst for grand hero entrances",
+    color: "#f59e0b"
+  },
+  {
+    id: "wave",
+    name: "Travelling Wave",
+    badge: "SMOOTH FLOW",
+    iconName: "wave",
+    desc: "Kinetic travelling sine-wave rolling from screen to rear booth",
+    color: "#38bdf8"
+  },
+  {
+    id: "pulse",
+    name: "Cinematic Breathe",
+    badge: "ATMOSPHERIC",
+    iconName: "pulse",
+    desc: "Slow, rhythmic deep breathing pulse with luminous volumetric glow",
+    color: "#ec4899"
+  },
+  {
+    id: "chase",
+    name: "Laser Runner",
+    badge: "HIGH SPEED",
+    iconName: "chase",
+    desc: "High-speed energy tracer racing along the zigzag wall bars",
+    color: "#06b6d4"
+  },
+  {
+    id: "strobe",
+    name: "Action Strobe",
+    badge: "ACTION / BEAT",
+    iconName: "strobe",
+    desc: "Rapid flashing multi-burst for intense action scenes and punch beats",
+    color: "#ef4444"
+  },
+  {
+    id: "rainbow",
+    name: "Cyber Chroma",
+    badge: "SPECTRUM",
+    iconName: "rainbow",
+    desc: "Dynamic spectrum cycling through cyan, purple, magenta, and gold",
+    color: "#a855f7"
+  },
+  {
+    id: "fire",
+    name: "Inferno Ripple",
+    badge: "FLAME",
+    iconName: "fire",
+    desc: "Organic flame flicker with burning amber, crimson, and gold hues",
+    color: "#f97316"
+  },
+  {
+    id: "ambilight_sync",
+    name: "Movie Reactive",
+    badge: "SYNCED",
+    iconName: "ambilight_sync",
+    desc: "Synchronizes side light colors and rhythm to the live movie screen",
+    color: "#10b981"
+  },
+  {
+    id: "on",
+    name: "Solid Neon",
+    badge: "STEADY",
+    iconName: "on",
+    desc: "Steady vibrant neon lighting without animation",
+    color: "#60a5fa"
+  },
+  {
+    id: "off",
+    name: "Dark / Off",
+    badge: "DARK",
+    iconName: "off",
+    desc: "Extinguished side wall neons",
+    color: "#64748b"
+  }
+];
 

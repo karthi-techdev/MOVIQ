@@ -4,8 +4,10 @@ export class SocketClient {
   private socket: WebSocket | null = null;
   private handlers: Map<string, Set<MessageHandler>> = new Map();
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private keepAliveTimer: NodeJS.Timeout | null = null;
   private isConnecting: boolean = false;
   private shouldReconnect: boolean = true;
+  private lastPongTime: number = Date.now();
 
   constructor() {}
 
@@ -33,6 +35,8 @@ export class SocketClient {
         return resolve();
       }
 
+      this.startKeepAlive();
+
       if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
         return resolve();
       }
@@ -53,6 +57,7 @@ export class SocketClient {
 
       this.socket.onopen = () => {
         this.isConnecting = false;
+        this.startKeepAlive();
         this.emit("open", {});
         resolve();
       };
@@ -60,6 +65,9 @@ export class SocketClient {
       this.socket.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
+          if (msg.type === "pong") {
+            this.lastPongTime = Date.now();
+          }
           this.emit(msg.type, msg);
           this.emit("*", msg);
         } catch (e) {
@@ -123,6 +131,39 @@ export class SocketClient {
     }
   }
 
+  public startKeepAlive(): void {
+    if (this.keepAliveTimer) return;
+
+    // Send first health ping immediately
+    this.pingHealthEndpoint();
+
+    // Set recurring 10-second interval for health route + WebSocket ping
+    this.keepAliveTimer = setInterval(() => {
+      // 1. WebSocket keep-alive ping every 10s
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        this.send({ type: "heartbeat", time: Date.now() });
+      } else if (this.shouldReconnect && (!this.socket || this.socket.readyState === WebSocket.CLOSED)) {
+        this.connect().catch(() => {});
+      }
+
+      // 2. HTTP health route ping every 10s to keep Render deployment active
+      this.pingHealthEndpoint();
+    }, 10000);
+  }
+
+  public pingHealthEndpoint(): void {
+    if (typeof window === "undefined") return;
+    try {
+      const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+      const clean = serverUrl.replace(/\/$/, "");
+      fetch(`${clean}/api/health`, {
+        method: "GET",
+        cache: "no-store",
+        mode: "cors"
+      }).catch(() => {});
+    } catch {}
+  }
+
   public disconnect() {
     this.shouldReconnect = false;
     if (this.socket) {
@@ -132,6 +173,10 @@ export class SocketClient {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
     }
   }
 }

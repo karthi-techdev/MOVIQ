@@ -1,6 +1,24 @@
 export type VideoQuality = "auto" | "1080p" | "720p" | "480p" | "360p";
 export type ScreenFrameMode = "fit" | "stretch" | "fill" | "16:9" | "21:9" | "2.35:1" | "2.39:1";
 export type AudioSpatialMode = "atmos" | "hall" | "stereo";
+export type SideLightMode =
+  | "on"
+  | "off"
+  | "wave"
+  | "hero_entry"
+  | "pulse"
+  | "chase"
+  | "strobe"
+  | "rainbow"
+  | "fire"
+  | "ambilight_sync";
+
+export interface LightingState {
+  ceiling: boolean;
+  stairs: boolean;
+  belowScreen: boolean;
+  sideLights: SideLightMode;
+}
 
 export interface Vector3Like {
   x: number;
@@ -58,6 +76,7 @@ export interface RoomDetail {
   name: string;
   hostId: string;
   movie: MovieState;
+  lighting?: LightingState;
   users: UserData[];
   seats: Record<number, string>;
 }

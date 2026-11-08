@@ -9,7 +9,13 @@ import {
   FiMaximize2,
   FiTv,
   FiCrop,
-  FiVideo
+  FiVideo,
+  FiSun,
+  FiMoon,
+  FiZap,
+  FiActivity,
+  FiHeart,
+  FiFastForward
 } from "react-icons/fi";
 import {
   FaYoutube,
@@ -18,9 +24,11 @@ import {
   FaGoogleDrive,
   FaDropbox
 } from "react-icons/fa6";
+import { IoFlame, IoColorPaletteOutline, IoFlash } from "react-icons/io5";
 import { HiBuildingLibrary } from "react-icons/hi2";
-import { parseVideoUrl, PRESET_MOVIES, PresetMovie } from "../lib/videoUtils";
-import { AudioSpatialMode, ScreenFrameMode } from "../types/cinema";
+import { parseVideoUrl } from "../lib/videoUtils";
+import { AudioSpatialMode, LightingState, ScreenFrameMode, SideLightMode } from "../types/cinema";
+import { SIDE_LIGHT_ANIMATIONS } from "../lib/constants";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -32,11 +40,40 @@ interface SettingsModalProps {
   frameMode?: ScreenFrameMode;
   spatialAudioEnabled?: boolean;
   spatialAudioMode?: AudioSpatialMode;
+  lighting?: LightingState;
   onLoadMovie: (title: string, url: string) => void;
   onToggleFitMode?: () => void;
   onFrameModeChange?: (mode: ScreenFrameMode) => void;
   onToggleSpatialAudio?: () => void;
   onSpatialAudioModeChange?: (mode: AudioSpatialMode) => void;
+  onLightingChange?: (partial: Partial<LightingState>) => void;
+}
+
+function renderSideLightIcon(id: SideLightMode) {
+  switch (id) {
+    case "hero_entry":
+      return <FiZap />;
+    case "wave":
+      return <FiActivity />;
+    case "pulse":
+      return <FiHeart />;
+    case "chase":
+      return <FiFastForward />;
+    case "strobe":
+      return <IoFlash />;
+    case "rainbow":
+      return <IoColorPaletteOutline />;
+    case "fire":
+      return <IoFlame />;
+    case "ambilight_sync":
+      return <FiFilm />;
+    case "on":
+      return <FiSun />;
+    case "off":
+      return <FiMoon />;
+    default:
+      return <FiSun />;
+  }
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -49,11 +86,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   frameMode = "2.35:1",
   spatialAudioEnabled = true,
   spatialAudioMode = "atmos",
+  lighting = { ceiling: true, stairs: true, belowScreen: true, sideLights: "on" },
   onLoadMovie,
   onToggleFitMode,
   onFrameModeChange,
   onToggleSpatialAudio,
-  onSpatialAudioModeChange
+  onSpatialAudioModeChange,
+  onLightingChange
 }) => {
   const [title, setTitle] = useState(currentTitle);
   const [url, setUrl] = useState(currentUrl);
@@ -70,11 +109,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (!url.trim()) return;
     onLoadMovie(title.trim() || "Shared Movie", url.trim());
     onClose();
-  };
-
-  const handleSelectPreset = (preset: PresetMovie) => {
-    setTitle(preset.title);
-    setUrl(preset.url);
   };
 
   const parsedInfo = parseVideoUrl(url);
@@ -247,45 +281,194 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </div>
 
-        {isHost && (
-          <>
-            {/* Quick Presets */}
-            <div style={{ marginBottom: "14px" }}>
-              <div style={{ fontSize: "11px", fontWeight: 600, color: "#94a3b8", marginBottom: "6px" }}>
-                QUICK DEMO MOVIES & STREAMS
+        {/* Theatre Lighting & Atmosphere System */}
+        <div style={{ padding: "12px 14px", background: "rgba(255,255,255,0.04)", borderRadius: "12px", marginBottom: "16px", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+            <div>
+              <div style={{ fontSize: "12px", fontWeight: 600, color: "#f1f5f9", display: "flex", alignItems: "center", gap: "6px" }}>
+                <FiSun style={{ color: "#fbbf24" }} /> Theatre Lighting & Atmosphere
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                {PRESET_MOVIES.map((preset, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => handleSelectPreset(preset)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "7px 10px",
-                      background: url === preset.url ? "rgba(96,165,250,0.18)" : "rgba(255,255,255,0.03)",
-                      border: url === preset.url ? "1px solid rgba(96,165,250,0.5)" : "1px solid rgba(255,255,255,0.06)",
-                      borderRadius: "8px",
-                      color: "#e2e8f0",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      fontSize: "11px",
-                      transition: "all 0.15s ease"
-                    }}
-                  >
-                    <span style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: "8px" }}>
-                      {preset.title}
-                    </span>
-                    <span style={{ fontSize: "9px", padding: "2px 6px", borderRadius: "6px", background: "rgba(255,255,255,0.08)", color: "#cbd5e1", whiteSpace: "nowrap" }}>
-                      {preset.badge}
-                    </span>
-                  </button>
-                ))}
+              <div style={{ fontSize: "10px", color: "#94a3b8" }}>
+                Individual fixture toggles, side wall wave animation & realistic video ambilight
               </div>
             </div>
+            <span
+              style={{
+                fontSize: "9px",
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: "6px",
+                background: isHost ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.06)",
+                color: isHost ? "#fbbf24" : "#94a3b8",
+                border: isHost ? "1px solid rgba(251,191,36,0.3)" : "1px solid rgba(255,255,255,0.1)"
+              }}
+            >
+              {isHost ? "Host Controls" : "Host Only"}
+            </span>
+          </div>
 
+          {/* HERO ENTRY Banner */}
+          <button
+            type="button"
+            className={`hero-entry-banner-btn ${lighting.sideLights === "hero_entry" ? "active" : ""}`}
+            style={{ marginBottom: "10px" }}
+            title="Trigger grand hero entrance fanfare strobe & gold/cyan shockwave across walls"
+            disabled={!isHost}
+            onClick={() =>
+              onLightingChange?.({
+                ceiling: false,
+                stairs: true,
+                belowScreen: false,
+                sideLights: "hero_entry"
+              })
+            }
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span className="hero-lightning" style={{ display: "inline-flex", alignItems: "center" }}><FiZap /></span>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.04em", color: "#fef08a" }}>
+                  TRIGGER HERO ENTRY FANFARE
+                </div>
+                <div style={{ fontSize: "8.5px", color: "rgba(254,240,138,0.75)" }}>
+                  Gold & cyan fanfare burst for character reveals
+                </div>
+              </div>
+            </div>
+            <span className="hero-trigger-pill">
+              {lighting.sideLights === "hero_entry" ? "ACTIVE" : "FIRE"}
+            </span>
+          </button>
+
+          {/* Presets */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "5px", marginBottom: "10px" }}>
+            {[
+              { id: "bright", label: "Bright", icon: <FiSun />, act: { ceiling: true, stairs: true, belowScreen: true, sideLights: "on" as const } },
+              { id: "hero", label: "Hero Entry", icon: <FiZap />, act: { ceiling: false, stairs: true, belowScreen: false, sideLights: "hero_entry" as const } },
+              { id: "wave", label: "Wave", icon: <FiActivity />, act: { ceiling: false, stairs: true, belowScreen: false, sideLights: "wave" as const } },
+              { id: "dim", label: "Dim", icon: <FiFilm />, act: { ceiling: false, stairs: true, belowScreen: false, sideLights: "off" as const } },
+              { id: "blackout", label: "Blackout", icon: <FiMoon />, act: { ceiling: false, stairs: false, belowScreen: false, sideLights: "off" as const } }
+            ].map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="button button-secondary"
+                disabled={!isHost}
+                style={{
+                  fontSize: "9.5px",
+                  padding: "5px 3px",
+                  minHeight: "auto",
+                  textAlign: "center",
+                  justifyContent: "center",
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "3px"
+                }}
+                onClick={() => onLightingChange?.(p.act)}
+              >
+                {p.icon} {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Individual toggles */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px", marginBottom: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <span style={{ fontSize: "10.5px", color: "#e2e8f0" }}>Ceiling Grid</span>
+              <button
+                type="button"
+                className={`lighting-toggle-pill ${lighting.ceiling ? "on" : "off"}`}
+                disabled={!isHost}
+                onClick={() => onLightingChange?.({ ceiling: !lighting.ceiling })}
+              >
+                {lighting.ceiling ? "ON" : "OFF"}
+              </button>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <span style={{ fontSize: "10.5px", color: "#e2e8f0" }}>Stair Steps</span>
+              <button
+                type="button"
+                className={`lighting-toggle-pill ${lighting.stairs ? "on" : "off"}`}
+                disabled={!isHost}
+                onClick={() => onLightingChange?.({ stairs: !lighting.stairs })}
+              >
+                {lighting.stairs ? "ON" : "OFF"}
+              </button>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px", background: "rgba(0,0,0,0.2)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+              <span style={{ fontSize: "10.5px", color: "#e2e8f0" }}>Below Screen</span>
+              <button
+                type="button"
+                className={`lighting-toggle-pill ${lighting.belowScreen ? "on" : "off"}`}
+                disabled={!isHost}
+                onClick={() => onLightingChange?.({ belowScreen: !lighting.belowScreen })}
+              >
+                {lighting.belowScreen ? "ON" : "OFF"}
+              </button>
+            </div>
+          </div>
+
+          {/* Side Lights Animations Grid */}
+          <div style={{ marginBottom: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+              <span style={{ fontSize: "10px", fontWeight: 700, letterSpacing: "0.05em", color: "#e2e8f0" }}>
+                SIDE LIGHT ANIMATIONS
+              </span>
+              <span style={{ fontSize: "8.5px", color: "#94a3b8" }}>
+                Soft ambient wash · No wall blotches
+              </span>
+            </div>
+            <div className="side-anim-grid">
+              {SIDE_LIGHT_ANIMATIONS.map((anim) => {
+                const isActive = lighting.sideLights === anim.id;
+                return (
+                  <button
+                    key={anim.id}
+                    type="button"
+                    className={`side-anim-card ${isActive ? "active" : ""}`}
+                    style={{
+                      borderColor: isActive ? anim.color : "rgba(255,255,255,0.08)",
+                      background: isActive ? `${anim.color}22` : "rgba(255,255,255,0.03)",
+                      boxShadow: isActive ? `0 0 10px ${anim.color}35` : "none"
+                    }}
+                    disabled={!isHost}
+                    onClick={() => onLightingChange?.({ sideLights: anim.id })}
+                    title={anim.desc}
+                  >
+                    <span style={{ fontSize: "13px", display: "inline-flex", alignItems: "center", color: anim.color }}>
+                      {renderSideLightIcon(anim.id)}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "9px",
+                        fontWeight: isActive ? 700 : 500,
+                        color: isActive ? anim.color : "#cbd5e1",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      {anim.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Ambilight callout */}
+          <div className="ambilight-status-bar">
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span className="ambilight-dot" />
+              <span>Realistic Screen Ambilight active</span>
+            </div>
+            <span style={{ fontSize: "8.5px", color: "#64748b" }}>Live video ambient bounce</span>
+          </div>
+        </div>
+
+        {isHost && (
+          <>
             <form onSubmit={handleSubmit}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
                 <label className="field-label" htmlFor="movie-title-input" style={{ margin: 0 }}>Movie title</label>

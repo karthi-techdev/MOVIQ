@@ -14,50 +14,7 @@ export interface PresetMovie {
   badge: string;
 }
 
-export const PRESET_MOVIES: PresetMovie[] = [
-  {
-    title: "Leo Official Trailer (Curved Screen HD)",
-    url: "https://www.youtube.com/watch?v=Po3jStA673E",
-    category: "Featured Trailer",
-    badge: "1080p Live Stream"
-  },
-  {
-    title: "Qube Cinema DTS Trailer (Dolby / DTS)",
-    url: "https://www.youtube.com/watch?v=MX-FXrql7NY",
-    category: "Featured Trailer",
-    badge: "Cinema DTS"
-  },
-  {
-    title: "Dolby Atmos TrueHD 7.1 Unfold Trailer",
-    url: "https://drive.google.com/file/d/1xqgTfj4k92_hsvbWvv-ZdJA7xO65ePzS/view",
-    category: "Google Drive + Atmos",
-    badge: "Atmos 7.1"
-  },
-  {
-    title: "Big Buck Bunny — Cinema Premiere (1080p)",
-    url: "/assets/movies/big_buck_bunny.mp4",
-    category: "Featured (Local Fast)",
-    badge: "1080p MP4"
-  },
-  {
-    title: "Sintel Trailer — Fantasy Animation (720p)",
-    url: "/assets/movies/sintel.mp4",
-    category: "Featured (Local Fast)",
-    badge: "720p MP4"
-  },
-  {
-    title: "Nature Spring 4K Demo (MDN CDN)",
-    url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
-    category: "Direct Video",
-    badge: "4K MP4"
-  },
-  {
-    title: "Mux Adaptive Live Stream (HLS)",
-    url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-    category: "Live Stream",
-    badge: "HLS m3u8"
-  }
-];
+export const PRESET_MOVIES: PresetMovie[] = [];
 
 export function parseVideoUrl(input: string): ParsedVideoUrl {
   const raw = String(input || "").trim();
