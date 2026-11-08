@@ -202,9 +202,15 @@ function publicUser(user) {
 const serializeUser = publicUser;
 
 function movieState(room) {
+  const now = Date.now();
+  let currentTime = room.movie.time;
+  if (room.movie.playing) {
+    currentTime += (now - room.movie.updatedAt) / 1000;
+  }
   return {
     ...room.movie,
-    serverTime: Date.now()
+    time: Math.max(0, currentTime),
+    serverTime: now
   };
 }
 const serializeMovie = (movie) => ({ ...movie });
@@ -284,11 +290,11 @@ function joinRoom(client, room, username) {
       id: room.id,
       name: room.name,
       hostId: room.hostId,
-      movie: room.movie,
+      movie: movieState(room),
       users: [...room.users.values()].map(publicUser),
       seats: Object.fromEntries(room.seats)
     },
-    movie: room.movie,
+    movie: movieState(room),
     users: [...room.users.values()].map(publicUser)
   });
 
@@ -561,7 +567,7 @@ function handleMessage(client, raw) {
         movie.updatedAt = now;
         broadcast(room, {
           type: "movie-loaded",
-          movie: { ...movie }
+          movie: movieState(room)
         });
         return;
       }
@@ -757,12 +763,29 @@ function heartbeat() {
 }
 const heartbeatInterval = setInterval(heartbeat, 30000);
 
+const movieSyncInterval = setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (room.users.size > 0 && room.movie.playing) {
+      const elapsed = (now - room.movie.updatedAt) / 1000;
+      const curTime = Math.max(0, room.movie.time + elapsed);
+      broadcast(room, {
+        type: "movie-sync",
+        time: curTime,
+        playing: true,
+        serverTime: now
+      });
+    }
+  }
+}, 3000);
+
 server.listen(PORT, () => {
   console.log(`Virtual Cinema server running at http://localhost:${PORT}`);
 });
 
 process.on("SIGINT", () => {
   clearInterval(heartbeatInterval);
+  clearInterval(movieSyncInterval);
   wss.close();
   server.close(() => process.exit(0));
 });

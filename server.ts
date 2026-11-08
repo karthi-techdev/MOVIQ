@@ -160,9 +160,15 @@ function serializeUser(user: ClientSession): UserData {
 }
 
 function movieState(room: RoomSession): MovieState {
+  const now = Date.now();
+  let currentTime = room.movie.time;
+  if (room.movie.playing) {
+    currentTime += (now - room.movie.updatedAt) / 1000;
+  }
   return {
     ...room.movie,
-    serverTime: Date.now()
+    time: Math.max(0, currentTime),
+    serverTime: now
   };
 }
 
@@ -237,11 +243,11 @@ function joinRoom(client: ClientSession, room: RoomSession, username: string) {
       id: room.id,
       name: room.name,
       hostId: room.hostId,
-      movie: room.movie,
+      movie: movieState(room),
       users: [...room.users.values()].map(serializeUser),
       seats: Object.fromEntries(room.seats)
     },
-    movie: room.movie,
+    movie: movieState(room),
     users: [...room.users.values()].map(serializeUser)
   });
 
@@ -837,21 +843,20 @@ function handleMessage(client: ClientSession, raw: any) {
         const ytId = extractYouTubeId(rawUrl);
         if (ytId) {
           const title = cleanString(message.title, 100) || "YouTube Video";
-          movie.url = `/api/youtube-stream?id=${ytId}`;
+          movie.url = `https://www.youtube.com/watch?v=${ytId}`;
           movie.title = title;
           movie.time = 0;
           movie.playing = false;
           movie.updatedAt = now;
-          resolveYouTubeStreamUrls(ytId).catch(() => {});
           broadcast(room, {
             type: "movie-loaded",
-            movie: { ...movie }
+            movie: movieState(room)
           });
           broadcast(room, {
             type: "chat",
             id: generateId(),
             system: true,
-            text: `[Stream] Streaming "${title}" directly from YouTube link on curved cinema screen!`,
+            text: `[Stream] Playing "${title}" from YouTube!`,
             timestamp: Date.now()
           });
           return;
@@ -860,22 +865,20 @@ function handleMessage(client: ClientSession, raw: any) {
         const gdriveId = extractGoogleDriveId(rawUrl);
         if (gdriveId) {
           const title = cleanString(message.title, 100) || "Google Drive Movie";
-          movie.url = `/api/gdrive-stream?id=${gdriveId}&eac3=1`;
+          movie.url = `/api/gdrive-stream?id=${gdriveId}`;
           movie.title = title;
           movie.time = 0;
           movie.playing = false;
           movie.updatedAt = now;
-          const dlUrl = `https://drive.usercontent.google.com/download?id=${gdriveId}&export=download&confirm=t`;
-          startGdriveTranscodeJob(gdriveId, dlUrl);
           broadcast(room, {
             type: "movie-loaded",
-            movie: { ...movie }
+            movie: movieState(room)
           });
           broadcast(room, {
             type: "chat",
             id: generateId(),
             system: true,
-            text: `[Stream] Playing "${title}" from Google Drive with EAC3 Dolby audio support!`,
+            text: `[Stream] Playing "${title}" from Google Drive!`,
             timestamp: Date.now()
           });
           return;
@@ -893,7 +896,7 @@ function handleMessage(client: ClientSession, raw: any) {
         movie.updatedAt = now;
         broadcast(room, {
           type: "movie-loaded",
-          movie: { ...movie }
+          movie: movieState(room)
         });
         return;
       }
@@ -1231,53 +1234,120 @@ function handleVideoProxy(req: http.IncomingMessage, res: http.ServerResponse, p
   proxyRemoteMediaStream(targetUrl, req, res, "video/mp4");
 }
 
-async function handleGdriveOrTranscodeStream(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {
-  let fileId = parsedUrl.query?.id as string | undefined;
+async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {
+  let fileId = (parsedUrl.query?.id as string | undefined)?.trim();
   const inputUrl = parsedUrl.query?.url as string | undefined;
 
   if (!fileId && inputUrl) {
     fileId = extractGoogleDriveId(inputUrl) || undefined;
   }
 
-  if (fileId) {
-    const rawUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t`;
-    const job = startGdriveTranscodeJob(fileId, rawUrl);
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
+  res.setHeader("Accept-Ranges", "bytes");
 
-    // Wait until at least 64KB is written to tempPath or cachePath exists
-    const checkReady = () => {
-      if (fs.existsSync(job.cachePath)) return { ready: true, path: job.cachePath, complete: true };
-      if (fs.existsSync(job.tempPath)) {
-        try {
-          const sz = fs.statSync(job.tempPath).size;
-          if (sz > 65536) return { ready: true, path: job.tempPath, complete: false };
-        } catch {}
-      }
-      return { ready: false, path: "", complete: false };
-    };
-
-    let status = checkReady();
-    if (!status.ready) {
-      for (let i = 0; i < 30; i++) {
-        await new Promise((r) => setTimeout(r, 100));
-        status = checkReady();
-        if (status.ready || job.error) break;
-      }
-    }
-
-    if (status.ready) {
-      serveRangeFromFile(req, res, status.path, status.complete);
-      return;
-    }
-  }
-
-  const fallbackUrl = inputUrl || (fileId ? `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=t` : undefined);
-  if (!fallbackUrl) {
-    res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end("Missing url or Google Drive id");
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
     return;
   }
 
-  proxyRemoteMediaStream(fallbackUrl, req, res, "video/mp4");
+  if (!fileId) {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Missing Google Drive file id");
+    return;
+  }
+
+  const initialUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`;
+  const clientRange = req.headers.range as string | undefined;
+
+  function fetchStream(targetUrl: string, cookieHeader = "", redirectCount = 0) {
+    if (redirectCount > 5) {
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "text/plain" });
+        res.end("Too many redirects from Google Drive");
+      }
+      return;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      if (!res.headersSent) {
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("Invalid Google Drive redirect URL");
+      }
+      return;
+    }
+
+    const headers: Record<string, string> = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "*/*"
+    };
+    if (cookieHeader) headers["Cookie"] = cookieHeader;
+    if (clientRange) headers["Range"] = clientRange;
+
+    const transport = parsed.protocol === "http:" ? http : https;
+    const proxyReq = transport.request(targetUrl, { method: req.method || "GET", headers }, (proxyRes) => {
+      const setCookies = proxyRes.headers["set-cookie"] || [];
+      const newCookies = Array.isArray(setCookies)
+        ? setCookies.map((c) => c.split(";")[0]).join("; ")
+        : String(setCookies).split(";")[0];
+      const mergedCookies = cookieHeader
+        ? (newCookies ? `${cookieHeader}; ${newCookies}` : cookieHeader)
+        : newCookies;
+
+      if ([301, 302, 303, 307].includes(proxyRes.statusCode || 0) && proxyRes.headers.location) {
+        proxyReq.destroy();
+        return fetchStream(proxyRes.headers.location, mergedCookies, redirectCount + 1);
+      }
+
+      const statusCode = proxyRes.statusCode || 200;
+      const resHeaders: Record<string, string | string[]> = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+        "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
+        "Accept-Ranges": "bytes"
+      };
+
+      const upstreamType = proxyRes.headers["content-type"] || "";
+      if (upstreamType.includes("html") || !upstreamType || upstreamType === "application/octet-stream") {
+        resHeaders["Content-Type"] = "video/mp4";
+      } else {
+        resHeaders["Content-Type"] = upstreamType;
+      }
+
+      if (proxyRes.headers["content-length"]) {
+        resHeaders["Content-Length"] = proxyRes.headers["content-length"];
+      }
+      if (proxyRes.headers["content-range"]) {
+        resHeaders["Content-Range"] = proxyRes.headers["content-range"];
+      }
+
+      res.writeHead(statusCode, resHeaders);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on("error", (err) => {
+      console.error(`[GDrive Stream] Error for ${fileId}:`, err.message);
+      if (!res.headersSent) {
+        res.writeHead(502, { "Content-Type": "text/plain" });
+        res.end(`Google Drive stream error: ${err.message}`);
+      }
+    });
+
+    req.on("close", () => {
+      proxyReq.destroy();
+    });
+
+    proxyReq.end();
+  }
+
+  fetchStream(initialUrl);
 }
 
 // Next.js App Initialization
@@ -1292,7 +1362,7 @@ app.prepare().then(() => {
       return;
     }
     if (parsedUrl.pathname === "/api/gdrive-stream" || parsedUrl.pathname === "/api/eac3-stream") {
-      handleGdriveOrTranscodeStream(req, res, parsedUrl);
+      handleGdriveStream(req, res, parsedUrl);
       return;
     }
     if (parsedUrl.pathname === "/api/youtube-stream") {
@@ -1331,12 +1401,30 @@ app.prepare().then(() => {
     });
   }, 30000);
 
+  // High-precision periodic movie synchronization (keeps all clients strictly in sync without drift)
+  const movieSyncInterval = setInterval(() => {
+    const now = Date.now();
+    for (const room of rooms.values()) {
+      if (room.users.size > 0 && room.movie.playing) {
+        const elapsed = (now - room.movie.updatedAt) / 1000;
+        const curTime = Math.max(0, room.movie.time + elapsed);
+        broadcast(room, {
+          type: "movie-sync",
+          time: curTime,
+          playing: true,
+          serverTime: now
+        });
+      }
+    }
+  }, 3000);
+
   server.listen(PORT, HOST, () => {
     console.log(`> Virtual Cinema Next.js server ready at http://localhost:${PORT}`);
   });
 
   process.on("SIGINT", () => {
     clearInterval(heartbeatInterval);
+    clearInterval(movieSyncInterval);
     wss.close();
     server.close(() => process.exit(0));
   });

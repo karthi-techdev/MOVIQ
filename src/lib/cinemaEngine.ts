@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
+import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import {
   AudioSpatialMode,
   CameraMode,
@@ -386,6 +387,18 @@ export class CinemaEngine {
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
   private lastVideoTime: number = -1;
 
+  public cssScene: THREE.Scene | null = null;
+  public cssRenderer: CSS3DRenderer | null = null;
+  private youtubeScreenContainer: HTMLDivElement | null = null;
+  private youtubeCssObject: CSS3DObject | null = null;
+  public isMobileDevice: boolean = false;
+
+  private lastSentPos: THREE.Vector3 = new THREE.Vector3(9999, 9999, 9999);
+  private lastSentRot: number = -9999;
+  private lastSentPitch: number = -9999;
+  private lastSentYaw: number = -9999;
+  private lastSentAction: string = "";
+
   private activeKeys: Set<string> = new Set();
   private isPointerDown: boolean = false;
   private dragStartX: number = 0;
@@ -422,14 +435,17 @@ export class CinemaEngine {
     this.camera = new THREE.PerspectiveCamera(56, width / height, 0.05, 120);
     this.camera.position.set(this.position.x, this.position.y + 1.55, this.position.z + 2.0);
 
+    this.isMobileDevice = typeof navigator !== "undefined" && (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || ("ontouchstart" in window));
+
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      powerPreference: "high-performance"
+      antialias: !this.isMobileDevice,
+      powerPreference: "high-performance",
+      precision: this.isMobileDevice ? "mediump" : "highp"
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.0));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.setPixelRatio(this.isMobileDevice ? 1.0 : Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.shadowMap.enabled = !this.isMobileDevice;
+    this.renderer.shadowMap.type = THREE.BasicShadowMap;
     if (THREE.SRGBColorSpace) {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
@@ -437,6 +453,19 @@ export class CinemaEngine {
     this.renderer.toneMappingExposure = 1.30;
 
     container.appendChild(this.renderer.domElement);
+
+    // Hardware CSS3D Perspective Renderer for high-FPS YouTube integration
+    this.cssScene = new THREE.Scene();
+    this.cssRenderer = new CSS3DRenderer();
+    this.cssRenderer.setSize(width, height);
+    this.cssRenderer.domElement.style.position = "absolute";
+    this.cssRenderer.domElement.style.top = "0";
+    this.cssRenderer.domElement.style.left = "0";
+    this.cssRenderer.domElement.style.width = "100%";
+    this.cssRenderer.domElement.style.height = "100%";
+    this.cssRenderer.domElement.style.pointerEvents = "none";
+    this.cssRenderer.domElement.id = "cinema-css3d-mount";
+    container.appendChild(this.cssRenderer.domElement);
 
     this.clock = new THREE.Clock();
 
@@ -888,7 +917,7 @@ export class CinemaEngine {
     const screenHeight = 13.8;
     const curveRadius = 34.0;
 
-    const screenGeo = new THREE.PlaneGeometry(screenWidth, screenHeight, 128, 32);
+    const screenGeo = new THREE.PlaneGeometry(screenWidth, screenHeight, 48, 16);
     const pos = screenGeo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
@@ -933,6 +962,33 @@ export class CinemaEngine {
     this.screenMesh.position.set(0, 7.30, -18.2);
     this.scene.add(this.screenMesh);
 
+    // Hardware CSS3D Perspective Mount for Synchronized YouTube Playback
+    const ytContainer = document.createElement("div");
+    ytContainer.id = "cinema-youtube-screen";
+    ytContainer.style.width = "1280px";
+    ytContainer.style.height = "720px";
+    ytContainer.style.backgroundColor = "#000000";
+    ytContainer.style.display = "none";
+    ytContainer.style.pointerEvents = "none";
+    ytContainer.style.overflow = "hidden";
+    ytContainer.style.borderRadius = "2px";
+
+    const ytMount = document.createElement("div");
+    ytMount.id = "youtube-player-mount";
+    ytMount.style.width = "100%";
+    ytMount.style.height = "100%";
+    ytContainer.appendChild(ytMount);
+
+    this.youtubeScreenContainer = ytContainer;
+    this.youtubeCssObject = new CSS3DObject(ytContainer);
+    this.youtubeCssObject.position.set(0, 7.30, -18.17);
+    const cssScaleX = screenWidth / 1280;
+    const cssScaleY = screenHeight / 720;
+    this.youtubeCssObject.scale.set(cssScaleX, cssScaleY, cssScaleX);
+    if (this.cssScene) {
+      this.cssScene.add(this.youtubeCssObject);
+    }
+
     // Ultra-thin Sleek Black Cinema Bezel Frame around the curved screen
     const borderMat = new THREE.MeshStandardMaterial({
       color: 0x05070c,
@@ -945,8 +1001,8 @@ export class CinemaEngine {
     const frameGeo = new THREE.PlaneGeometry(
       screenWidth + frameThickness * 2,
       screenHeight + frameThickness * 2,
-      128,
-      32
+      48,
+      16
     );
     const fPos = frameGeo.attributes.position;
     for (let i = 0; i < fPos.count; i++) {
@@ -1113,6 +1169,15 @@ export class CinemaEngine {
       this.screenShaderMaterial.uniforms.map.value = this.defaultScreenTexture;
       this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
+    }
+  }
+
+  public showYouTubeScreen(show: boolean) {
+    if (this.youtubeScreenContainer) {
+      this.youtubeScreenContainer.style.display = show ? "block" : "none";
+    }
+    if (show) {
+      this.showStandbyTexture();
     }
   }
 
@@ -2408,16 +2473,38 @@ export class CinemaEngine {
 
   private broadcastLocalMovement(action: string = "idle") {
     const now = performance.now();
-    if (now - this.lastMoveSendTime > 75) {
-      this.lastMoveSendTime = now;
+    const timeSinceLast = now - this.lastMoveSendTime;
 
-      const myAvatar = this.avatars.get(this.localUserId);
-      const headPitch = (myAvatar && myAvatar.userData.currentHeadPitch !== undefined)
-        ? myAvatar.userData.currentHeadPitch
-        : Math.max(-0.65, Math.min(0.65, this.cameraPitch));
-      const headYaw = (myAvatar && myAvatar.userData.currentHeadYaw !== undefined)
-        ? myAvatar.userData.currentHeadYaw
-        : 0;
+    const myAvatar = this.avatars.get(this.localUserId);
+    const headPitch = (myAvatar && myAvatar.userData.currentHeadPitch !== undefined)
+      ? myAvatar.userData.currentHeadPitch
+      : Math.max(-0.65, Math.min(0.65, this.cameraPitch));
+    const headYaw = (myAvatar && myAvatar.userData.currentHeadYaw !== undefined)
+      ? myAvatar.userData.currentHeadYaw
+      : 0;
+
+    const posDist = this.position.distanceTo(this.lastSentPos);
+    const rotDiff = Math.abs(this.rotation - this.lastSentRot);
+    const pitchDiff = Math.abs(headPitch - this.lastSentPitch);
+    const yawDiff = Math.abs(headYaw - this.lastSentYaw);
+    const actionChanged = action !== this.lastSentAction;
+
+    const isMoving = action === "walk" || action === "run" || action === "slouch_walk" || action === "jump";
+
+    // Strictly rate-limited and change-filtered to eliminate multiplayer packet lag and stops
+    const shouldSend =
+      actionChanged ||
+      (isMoving && timeSinceLast >= 50 && posDist > 0.015) ||
+      (!isMoving && timeSinceLast >= 75 && (rotDiff > 0.025 || pitchDiff > 0.04 || yawDiff > 0.04)) ||
+      (timeSinceLast >= 1800);
+
+    if (shouldSend) {
+      this.lastMoveSendTime = now;
+      this.lastSentPos.copy(this.position);
+      this.lastSentRot = this.rotation;
+      this.lastSentPitch = headPitch;
+      this.lastSentYaw = headYaw;
+      this.lastSentAction = action;
 
       if (this.callbacks.onLocalMovement) {
         this.callbacks.onLocalMovement(
@@ -2603,14 +2690,27 @@ export class CinemaEngine {
       }
     }
 
-    // 3. Remote Avatars Interpolation & Head Tracking
+    // 3. Remote Avatars High-Precision Delta Damping & Head Tracking
     this.avatars.forEach((avatar, id) => {
       if (id !== this.localUserId) {
-        avatar.position.lerp(avatar.userData.targetPosition as THREE.Vector3, 0.2);
-        avatar.rotation.y = THREE.MathUtils.lerp(
+        const targetPos = avatar.userData.targetPosition as THREE.Vector3;
+        const dist = avatar.position.distanceTo(targetPos);
+
+        if (dist > 3.0) {
+          avatar.position.copy(targetPos);
+        } else if (dist > 0.005) {
+          const isRunning = avatar.userData.lastAction === "run";
+          const dampSpeed = isRunning ? 22.0 : 16.0;
+          avatar.position.x = THREE.MathUtils.damp(avatar.position.x, targetPos.x, dampSpeed, delta);
+          avatar.position.y = THREE.MathUtils.damp(avatar.position.y, targetPos.y, dampSpeed, delta);
+          avatar.position.z = THREE.MathUtils.damp(avatar.position.z, targetPos.z, dampSpeed, delta);
+        }
+
+        avatar.rotation.y = THREE.MathUtils.damp(
           avatar.rotation.y,
           avatar.userData.targetRotation as number,
-          0.2
+          16.0,
+          delta
         );
 
         const bone = avatar.userData.headBone as THREE.Bone | null;
@@ -2621,8 +2721,8 @@ export class CinemaEngine {
           if (avatar.userData.currentHeadYaw === undefined) avatar.userData.currentHeadYaw = 0;
           if (avatar.userData.currentHeadPitch === undefined) avatar.userData.currentHeadPitch = 0;
 
-          avatar.userData.currentHeadYaw = THREE.MathUtils.damp(avatar.userData.currentHeadYaw, targetYaw, 4.5, delta);
-          avatar.userData.currentHeadPitch = THREE.MathUtils.damp(avatar.userData.currentHeadPitch, targetPitch, 4.5, delta);
+          avatar.userData.currentHeadYaw = THREE.MathUtils.damp(avatar.userData.currentHeadYaw, targetYaw, 5.0, delta);
+          avatar.userData.currentHeadPitch = THREE.MathUtils.damp(avatar.userData.currentHeadPitch, targetPitch, 5.0, delta);
 
           const baseRotX = bone.userData.baseRotX !== undefined ? bone.userData.baseRotX : 0;
           const baseRotY = bone.userData.baseRotY !== undefined ? bone.userData.baseRotY : 0;
@@ -2650,6 +2750,10 @@ export class CinemaEngine {
 
     if (this.renderer && this.scene && this.camera) {
       this.renderer.render(this.scene, this.camera);
+    }
+
+    if (this.cssRenderer && this.cssScene && this.camera) {
+      this.cssRenderer.render(this.cssScene, this.camera);
     }
   }
 
@@ -2684,6 +2788,9 @@ export class CinemaEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    if (this.cssRenderer) {
+      this.cssRenderer.setSize(width, height);
+    }
   };
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -3003,6 +3110,10 @@ export class CinemaEngine {
     if (this.defaultScreenTexture) {
       this.defaultScreenTexture.dispose();
     }
+    if (this.cssRenderer && this.cssRenderer.domElement.parentElement) {
+      this.cssRenderer.domElement.parentElement.removeChild(this.cssRenderer.domElement);
+    }
+
     if (this.renderer) {
       this.renderer.dispose();
     }

@@ -75,7 +75,7 @@ export function parseVideoUrl(input: string): ParsedVideoUrl {
     return {
       type: "youtube",
       id: videoId,
-      streamUrl: `${apiBase}/api/youtube-stream?id=${videoId}`,
+      streamUrl: `https://www.youtube.com/watch?v=${videoId}`,
       title: "YouTube Video"
     };
   }
@@ -83,7 +83,7 @@ export function parseVideoUrl(input: string): ParsedVideoUrl {
     return {
       type: "youtube",
       id: raw,
-      streamUrl: `${apiBase}/api/youtube-stream?id=${raw}`,
+      streamUrl: `https://www.youtube.com/watch?v=${raw}`,
       title: "YouTube Video"
     };
   }
@@ -92,7 +92,7 @@ export function parseVideoUrl(input: string): ParsedVideoUrl {
     return {
       type: "youtube",
       id: cleanId,
-      streamUrl: `${apiBase}/api/youtube-stream?id=${cleanId}`,
+      streamUrl: `https://www.youtube.com/watch?v=${cleanId}`,
       title: "YouTube Video"
     };
   }
@@ -106,16 +106,16 @@ export function parseVideoUrl(input: string): ParsedVideoUrl {
     return {
       type: "direct",
       id: fileId,
-      streamUrl: `${apiBase}/api/gdrive-stream?id=${fileId}&eac3=1`,
-      title: "Google Drive Movie (EAC3 Ready)"
+      streamUrl: `/api/gdrive-stream?id=${fileId}`,
+      title: "Google Drive Movie"
     };
   }
   if (/^[a-zA-Z0-9_-]{25,45}$/.test(raw) && !raw.includes("/") && !raw.includes(".")) {
     return {
       type: "direct",
       id: raw,
-      streamUrl: `${apiBase}/api/gdrive-stream?id=${raw}&eac3=1`,
-      title: "Google Drive Movie (EAC3 Ready)"
+      streamUrl: `/api/gdrive-stream?id=${raw}`,
+      title: "Google Drive Movie"
     };
   }
 
