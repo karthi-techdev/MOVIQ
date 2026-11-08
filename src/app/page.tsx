@@ -417,7 +417,7 @@ function CinemaApp() {
         });
       } else if (!msg.state.playing && !video.paused) {
         video.pause();
-        if (targetTime === 0 && engine) {
+        if (!msg.state.url && engine) {
           engine.showStandbyTexture();
         }
       }

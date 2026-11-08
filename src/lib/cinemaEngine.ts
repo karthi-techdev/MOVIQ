@@ -534,50 +534,13 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    const grad = ctx.createRadialGradient(960, 540, 180, 960, 540, 1100);
-    grad.addColorStop(0, "#1d4ed8");
-    grad.addColorStop(0.3, "#0f2b6b");
-    grad.addColorStop(0.7, "#081330");
-    grad.addColorStop(1, "#020617");
+    const grad = ctx.createRadialGradient(960, 540, 160, 960, 540, 1150);
+    grad.addColorStop(0, "#3b82f6");
+    grad.addColorStop(0.35, "#2563eb");
+    grad.addColorStop(0.7, "#1d4ed8");
+    grad.addColorStop(1, "#0d1b3e");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
-
-    // Subtle cinema grid pattern
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
-    ctx.lineWidth = 1;
-    for (let x = 0; x < 1920; x += 80) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, 1080);
-      ctx.stroke();
-    }
-    for (let y = 0; y < 1080; y += 80) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(1920, y);
-      ctx.stroke();
-    }
-
-    // Crisp glowing cinematic branding
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    ctx.shadowColor = "#60a5fa";
-    ctx.shadowBlur = 40;
-    ctx.font = "900 110px 'Segoe UI', system-ui, -apple-system, sans-serif";
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText("MOVIQ", 960, 480);
-
-    ctx.shadowBlur = 0;
-    ctx.font = "600 30px 'Segoe UI', system-ui, -apple-system, sans-serif";
-    ctx.fillStyle = "#93c5fd";
-    ctx.fillText("PREMIERE MULTIPLEX AUDITORIUM", 960, 565);
-
-    ctx.font = "400 22px 'Segoe UI', system-ui, -apple-system, sans-serif";
-    ctx.fillStyle = "#64748b";
-    ctx.fillText("Select a movie from controls below or paste a video link to begin", 960, 620);
-    ctx.restore();
 
     return new THREE.CanvasTexture(canvas);
   }
@@ -1152,14 +1115,14 @@ export class CinemaEngine {
       } else {
         this.applyAspectRatioFit();
       }
+      this.videoTexture.needsUpdate = true;
     }
   }
 
   public showStandbyTexture() {
     if (this.screenShaderMaterial && this.defaultScreenTexture) {
       this.screenShaderMaterial.uniforms.map.value = this.defaultScreenTexture;
-      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
-      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
+      this.applyAspectRatioFit();
     }
   }
 
@@ -1185,8 +1148,15 @@ export class CinemaEngine {
       if (video.videoWidth && video.videoHeight) {
         this.updateVideoAspectRatio(video.videoWidth, video.videoHeight);
       }
+      this.showVideoTexture();
     };
     video.addEventListener("loadedmetadata", onMeta);
+    video.addEventListener("loadeddata", () => {
+      this.showVideoTexture();
+    });
+    video.addEventListener("canplay", () => {
+      this.showVideoTexture();
+    });
 
     // Hardware-accelerated per-frame compositor sync for native 60fps/24fps playback
     const onVideoFrame = () => {
@@ -1226,7 +1196,7 @@ export class CinemaEngine {
     });
 
     video.addEventListener("pause", () => {
-      if (video.currentTime === 0) {
+      if (!video.src) {
         this.showStandbyTexture();
       }
     });
@@ -1235,8 +1205,7 @@ export class CinemaEngine {
       this.showStandbyTexture();
     });
 
-    // Only display video texture if playback is actually running with valid frames; otherwise stay on standby
-    if (!video.paused && video.currentTime > 0) {
+    if (video.src) {
       this.showVideoTexture();
     } else {
       this.showStandbyTexture();
