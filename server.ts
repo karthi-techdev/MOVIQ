@@ -1515,6 +1515,16 @@ function handleMessage(client: ClientSession, raw: any) {
       }
 
       switch (action) {
+        case "sync":
+        case "heartbeat":
+          if (typeof message.time === "number" && isFinite(message.time)) {
+            movie.time = Math.max(0, message.time);
+          }
+          if (typeof message.playing === "boolean") {
+            movie.playing = message.playing;
+          }
+          movie.updatedAt = now;
+          return;
         case "play":
           movie.playing = true;
           movie.time = Math.max(0, Number(message.time) || 0);
@@ -2319,18 +2329,18 @@ app.prepare().then(() => {
   const movieSyncInterval = setInterval(() => {
     const now = Date.now();
     for (const room of rooms.values()) {
-      if (room.users.size > 0 && room.movie.playing) {
-        const elapsed = (now - room.movie.updatedAt) / 1000;
+      if (room.users.size > 0 && room.movie.url) {
+        const elapsed = room.movie.playing ? (now - room.movie.updatedAt) / 1000 : 0;
         const curTime = Math.max(0, room.movie.time + elapsed);
         broadcast(room, {
           type: "movie-sync",
           time: curTime,
-          playing: true,
+          playing: room.movie.playing,
           serverTime: now
         });
       }
     }
-  }, 3000);
+  }, 1500);
 
   server.listen(PORT, HOST, () => {
     console.log(`> Virtual Cinema Next.js server ready at http://localhost:${PORT}`);

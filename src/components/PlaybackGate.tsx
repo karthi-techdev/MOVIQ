@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { FiPlay } from "react-icons/fi";
 
 interface PlaybackGateProps {
   isOpen: boolean;
@@ -13,7 +14,7 @@ export const PlaybackGate: React.FC<PlaybackGateProps> = ({ isOpen, onEnablePlay
   return (
     <div id="playback-gate" className="playback-gate">
       <div className="glass-panel playback-gate-card">
-        <span className="gate-icon">▶</span>
+        <span className="gate-icon"><FiPlay /></span>
         <h3>Ready for the movie?</h3>
         <p>Your browser needs a click to enable video and audio playback.</p>
         <button

@@ -128,6 +128,28 @@ function CinemaApp() {
     };
   }, []);
 
+  const playVideoSafe = useCallback((video: HTMLVideoElement) => {
+    const engine = engineRef.current;
+    if (engine) engine.showVideoTexture();
+    const p = video.play();
+    if (p !== undefined) {
+      p.catch((err) => {
+        if (err.name === "NotAllowedError") {
+          // Autoplay was blocked: start video muted so visuals immediately render on cinema screen
+          video.muted = true;
+          video.play()
+            .then(() => {
+              if (engine) engine.showVideoTexture();
+              setIsPlaybackGateOpen(true);
+            })
+            .catch(() => {
+              setIsPlaybackGateOpen(true);
+            });
+        }
+      });
+    }
+  }, []);
+
   // Universal Media Loader: maps all videos directly onto the curved 3D cinema screen
   const applyMediaSource = useCallback((mediaUrl: string, selectedQuality?: VideoQuality, resumeTime?: number, autoResume?: boolean) => {
     const video = videoRef.current;
@@ -166,8 +188,6 @@ function CinemaApp() {
     }
 
     // 3. Route external direct video URLs through CORS streaming proxy to prevent WebGL VideoTexture taint
-    // IMPORTANT: Do NOT proxy .m3u8 HLS playlists with video-proxy!
-    // Hls.js runs in-browser and must resolve relative child playlists and .ts segments directly against the remote CDN origin.
     const isHls = targetUrl.includes(".m3u8");
     const isExternal =
       (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) &&
@@ -186,14 +206,28 @@ function CinemaApp() {
       hlsRef.current = null;
     }
 
-    if (resumeTime && resumeTime > 0) {
-      const onResume = () => {
-        try {
-          video.currentTime = resumeTime;
-          if (autoResume) video.play().catch(() => {});
-        } catch {}
-      };
+    const targetResumeTime = typeof resumeTime === "number" ? Math.max(0, resumeTime) : 0;
+    const shouldPlay = !!autoResume;
+
+    let resumed = false;
+    const onResume = () => {
+      if (resumed) return;
+      resumed = true;
+      try {
+        if (targetResumeTime > 0 && isFinite(targetResumeTime)) {
+          video.currentTime = targetResumeTime;
+        }
+        if (shouldPlay) {
+          playVideoSafe(video);
+        }
+      } catch {}
+    };
+
+    if (video.readyState >= 1) {
+      onResume();
+    } else {
       video.addEventListener("loadedmetadata", onResume, { once: true });
+      video.addEventListener("canplay", onResume, { once: true });
     }
 
     if (isHls || targetUrl.includes(".m3u8")) {
@@ -208,6 +242,7 @@ function CinemaApp() {
         });
         hls.loadSource(targetUrl);
         hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, onResume);
         hlsRef.current = hls;
         if (engine) engine.setVideoSource(video);
       } else {
@@ -220,7 +255,7 @@ function CinemaApp() {
       video.load();
       if (engine) engine.setVideoSource(video);
     }
-  }, [quality]);
+  }, [quality, playVideoSafe]);
 
   // Video Element event listeners and CORS error fallback
   useEffect(() => {
@@ -402,9 +437,13 @@ function CinemaApp() {
             }
           }
 
-          // Set movie video source
+          // Set movie video source with exact current playback time & auto-resume state
           if (msg.movie && msg.movie.url) {
-            applyMediaSource(msg.movie.url);
+            const now = Date.now();
+            const elapsed = msg.movie.playing && msg.movie.updatedAt ? (now - msg.movie.updatedAt) / 1000 : 0;
+            const currentPlaybackTime = Math.max(0, (msg.movie.time || 0) + elapsed);
+            const shouldAutoPlay = !!msg.movie.playing;
+            applyMediaSource(msg.movie.url, quality, currentPlaybackTime, shouldAutoPlay);
           }
         }
       }, 50);
@@ -462,7 +501,9 @@ function CinemaApp() {
 
     socketClient.on("movie-loaded", (msg: { movie: MovieState }) => {
       setMovie(msg.movie);
-      applyMediaSource(msg.movie.url);
+      const isAutoPlay = !!msg.movie.playing;
+      const initialTime = Math.max(0, msg.movie.time || 0);
+      applyMediaSource(msg.movie.url, quality, initialTime, isAutoPlay);
       showToastRef.current(`Now Showing: ${msg.movie.title}`);
     });
 
@@ -476,8 +517,8 @@ function CinemaApp() {
       const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
       const targetTime = Math.max(0, msg.state.time + elapsed);
 
-      // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 3 seconds (NEVER on volume)
-      if (msg.action !== "volume" && (msg.action === "seek" || Math.abs(video.currentTime - targetTime) > 3.0)) {
+      // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 1.5 seconds (NEVER on volume)
+      if (msg.action !== "volume" && (msg.action === "seek" || Math.abs(video.currentTime - targetTime) > 1.5)) {
         try {
           if (isFinite(targetTime) && targetTime >= 0) {
             video.currentTime = targetTime;
@@ -486,14 +527,7 @@ function CinemaApp() {
       }
 
       if (msg.state.playing && video.paused) {
-        if (engine) {
-          engine.showVideoTexture();
-        }
-        video.play().catch((err) => {
-          if (err.name === "NotAllowedError") {
-            setIsPlaybackGateOpen(true);
-          }
-        });
+        playVideoSafe(video);
       } else if (!msg.state.playing && !video.paused) {
         video.pause();
         if (!msg.state.url && engine) {
@@ -522,17 +556,31 @@ function CinemaApp() {
 
       const now = Date.now();
       const latency = (now - msg.serverTime) / 1000;
-      const targetTime = msg.time + latency;
+      const targetTime = Math.max(0, msg.time + latency);
       const drift = targetTime - video.currentTime;
 
-      // Smooth playback rate slew for minor drifts to guarantee silky smooth streaming without pauses:
-      if (Math.abs(drift) > 3.0) {
-        video.currentTime = targetTime;
+      // 1. Play / Pause state synchronization
+      if (msg.playing && video.paused) {
+        playVideoSafe(video);
+      } else if (!msg.playing && !video.paused) {
+        video.pause();
+      }
+
+      // 2. High-precision sync algorithm:
+      // - Drift > 1.2s: hard seek immediately so clients snap into sync
+      // - Drift between 0.25s and 1.2s: slew playbackRate by +8% or -8% (smooth catch-up)
+      // - Drift <= 0.25s: 1.0x playback rate (tight audio lock)
+      if (Math.abs(drift) > 1.2) {
+        if (video.readyState >= 1) {
+          try {
+            video.currentTime = targetTime;
+          } catch {}
+        }
         video.playbackRate = 1.0;
-      } else if (drift > 0.4) {
-        video.playbackRate = 1.04;
-      } else if (drift < -0.4) {
-        video.playbackRate = 0.96;
+      } else if (drift > 0.25) {
+        video.playbackRate = 1.08;
+      } else if (drift < -0.25) {
+        video.playbackRate = 0.92;
       } else {
         video.playbackRate = 1.0;
       }
@@ -588,6 +636,27 @@ function CinemaApp() {
       socketClient.disconnect();
     };
   }, [applyMediaSource]);
+
+  // Host Clock Authority: The Host's player is the master clock for the room.
+  // Periodically send lightweight playback heartbeats to anchor room time with zero drift.
+  useEffect(() => {
+    if (!inRoom || !currentRoom) return;
+    const isCurrentHost = currentRoom.hostId === selfId;
+    if (!isCurrentHost) return;
+
+    const timer = setInterval(() => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 1) return;
+      socketClient.send({
+        type: "playback",
+        action: "sync",
+        time: video.currentTime,
+        playing: !video.paused
+      });
+    }, 1200);
+
+    return () => clearInterval(timer);
+  }, [inRoom, currentRoom, selfId]);
 
   // Actions
   const handleCreateRoom = (theatreName: string, username: string, charType: string, isPublic: boolean) => {
@@ -895,7 +964,20 @@ function CinemaApp() {
   return (
     <>
       {/* 3D WebGL Canvas Container */}
-      <div id="scene-container" ref={containerRef} aria-label="Interactive 3D cinema" />
+      <div
+        id="scene-container"
+        ref={containerRef}
+        aria-label="Interactive 3D cinema"
+        onClick={() => {
+          if (videoRef.current && videoRef.current.muted) {
+            videoRef.current.muted = false;
+            setIsPlaybackGateOpen(false);
+          }
+          if (engineRef.current) {
+            engineRef.current.spatialAudio.resume();
+          }
+        }}
+      />
 
       {/* Hidden Video element for WebGL VideoTexture */}
       <video
