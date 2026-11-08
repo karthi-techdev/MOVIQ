@@ -534,7 +534,7 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    // Natural ambient dim white cinema projection screen material adapted to theater lighting
+    // Natural ambient dim white cinema projection screen material adapted to theater lighting (plain, smooth)
     const grad = ctx.createRadialGradient(960, 540, 100, 960, 540, 1150);
     grad.addColorStop(0, "#73829c"); // Dim matte white catching ambient auditorium light
     grad.addColorStop(0.4, "#5d6d87"); // Natural soft cinema screen body
@@ -542,24 +542,6 @@ export class CinemaEngine {
     grad.addColorStop(1.0, "#2c3647"); // Soft ambient vignette near bezel
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
-
-    // Ultra-fine cinema screen micro-perforation fabric texture
-    ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
-    for (let y = 0; y < 1080; y += 4) {
-      for (let x = 0; x < 1920; x += 4) {
-        if ((x + y) % 8 === 0) {
-          ctx.fillRect(x, y, 1.5, 1.5);
-        }
-      }
-    }
-    ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
-    for (let y = 2; y < 1080; y += 4) {
-      for (let x = 2; x < 1920; x += 4) {
-        if ((x + y) % 8 === 4) {
-          ctx.fillRect(x, y, 1.5, 1.5);
-        }
-      }
-    }
 
     const texture = new THREE.CanvasTexture(canvas);
     if (THREE.SRGBColorSpace) {
