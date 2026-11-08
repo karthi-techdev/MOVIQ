@@ -8,6 +8,7 @@ import crypto from "crypto";
 import next from "next";
 import { WebSocketServer, WebSocket } from "ws";
 import { LightingState, MovieState, RoomSummary, SideLightMode, UserData, Vector3Like } from "./src/types/cinema";
+import { Innertube, ClientType } from "youtubei.js";
 
 const dev = process.env.NODE_ENV !== "production";
 const PORT = Number(process.env.PORT || 3000);
@@ -653,13 +654,103 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
   });
 }
 
-async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
-  const cacheKey = `${videoId}_${quality}`;
-  const cached = ytStreamCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached;
-  }
+// ==========================================
+// YOUTUBE RESOLVER ENGINE SWITCH (Backend Code)
+// Set USE_YOUTUBEI to true to use youtubei.js (Innertube)
+// Set USE_YOUTUBEI to false to use yt-dlp binary
+// ==========================================
+const USE_YOUTUBEI = true;
 
+let innertubeInstance: any = null;
+let innertubePromise: Promise<any> | null = null;
+
+async function getInnertube(): Promise<any> {
+  if (innertubeInstance) return innertubeInstance;
+  if (innertubePromise) return innertubePromise;
+
+  innertubePromise = (async () => {
+    try {
+      const yt = await Innertube.create({
+        client_type: ClientType.VISIONOS
+      });
+      innertubeInstance = yt;
+      return yt;
+    } catch (err: any) {
+      innertubePromise = null;
+      throw err;
+    }
+  })();
+
+  return innertubePromise;
+}
+
+async function resolveYouTubeStreamWithInnertube(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
+  let maxH = 1080;
+  if (quality === "720p") maxH = 720;
+  else if (quality === "480p") maxH = 480;
+  else if (quality === "360p") maxH = 360;
+  else if (quality === "1080p" || quality === "auto" || quality === "high") maxH = 1080;
+
+  try {
+    const yt = await getInnertube();
+    const res = await yt.actions.execute("/player", { videoId });
+
+    if (res.data?.playabilityStatus?.status !== "OK") {
+      console.warn(`[Innertube] Playability status not OK for ${videoId}:`, res.data?.playabilityStatus?.status);
+      return null;
+    }
+
+    const adaptive: any[] = res.data?.streamingData?.adaptiveFormats || [];
+    const progressive: any[] = (res.data?.streamingData?.formats || []).filter((f: any) => f.url);
+
+    // 1. Prefer standard AVC1 (H.264) video up to maxH for smooth browser hardware decoding
+    const avc1Videos = adaptive.filter(
+      (f: any) => f.mimeType?.includes("video/mp4") && f.mimeType?.includes("avc1") && f.height && f.height <= maxH && f.url
+    );
+    avc1Videos.sort((a: any, b: any) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
+
+    // 2. Select best MP4 audio (AAC)
+    const mp4Audios = adaptive.filter((f: any) => f.mimeType?.includes("audio/mp4") && f.url);
+    mp4Audios.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+
+    let chosenVideo = avc1Videos[0];
+    if (!chosenVideo) {
+      const anyMp4Videos = adaptive.filter(
+        (f: any) => f.mimeType?.includes("video/mp4") && f.height && f.height <= maxH && f.url
+      );
+      anyMp4Videos.sort((a: any, b: any) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
+      chosenVideo = anyMp4Videos[0];
+    }
+
+    if (chosenVideo) {
+      console.log(`[Innertube] Resolved ${videoId} -> ${chosenVideo.qualityLabel || chosenVideo.height + "p"} (${chosenVideo.mimeType}) + audio itag ${mp4Audios[0]?.itag}`);
+      return {
+        videoUrl: chosenVideo.url,
+        audioUrl: mp4Audios.length > 0 ? mp4Audios[0].url : null,
+        expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
+      };
+    }
+
+    // 3. Fallback to pre-muxed progressive format (e.g. 360p itag 18)
+    if (progressive.length > 0) {
+      console.log(`[Innertube] Resolved ${videoId} -> pre-muxed ${progressive[0].qualityLabel || progressive[0].height + "p"}`);
+      return {
+        videoUrl: progressive[0].url,
+        audioUrl: null,
+        expiresAt: Date.now() + 2 * 60 * 60 * 1000
+      };
+    }
+
+    return null;
+  } catch (err: any) {
+    console.error(`[Innertube] Error resolving ${videoId}:`, err.message);
+    innertubeInstance = null;
+    innertubePromise = null;
+    return null;
+  }
+}
+
+async function resolveYouTubeStreamWithYtDlp(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
   let maxH = 1080;
   if (quality === "720p") maxH = 720;
   else if (quality === "480p") maxH = 480;
@@ -720,12 +811,41 @@ async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080
     }
   }
 
-  const result: CachedYtStream = {
+  return {
     videoUrl,
     audioUrl,
     expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
   };
-  ytStreamCache.set(cacheKey, result);
+}
+
+async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
+  const cacheKey = `${videoId}_${quality}`;
+  const cached = ytStreamCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  let result: CachedYtStream | null = null;
+
+  if (USE_YOUTUBEI) {
+    console.log(`[YouTube Resolver] Engine: youtubei.js (Innertube) for ${videoId} (${quality})`);
+    result = await resolveYouTubeStreamWithInnertube(videoId, quality);
+    if (!result) {
+      console.warn(`[YouTube Resolver] youtubei.js returned no stream for ${videoId}, falling back to yt-dlp engine...`);
+      result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
+    }
+  } else {
+    console.log(`[YouTube Resolver] Engine: yt-dlp for ${videoId} (${quality})`);
+    result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
+    if (!result) {
+      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to youtubei.js engine...`);
+      result = await resolveYouTubeStreamWithInnertube(videoId, quality);
+    }
+  }
+
+  if (result) {
+    ytStreamCache.set(cacheKey, result);
+  }
   return result;
 }
 
