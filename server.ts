@@ -69,6 +69,10 @@ interface RoomSession {
   name: string;
   public: boolean;
   hostId: string;
+  creatorUsername?: string;
+  hostUsername?: string;
+  hostSecret?: string;
+  hostGraceTimer?: NodeJS.Timeout | null;
   users: Map<string, ClientSession>;
   seats: Map<number, string>;
   movie: MovieState;
@@ -217,11 +221,16 @@ function broadcastRoomList() {
 }
 
 function createRoom(owner: ClientSession, data: { name?: string; isPublic?: boolean }): RoomSession {
+  const secret = crypto.randomBytes(16).toString("hex");
   const room: RoomSession = {
     id: makeRoomId(),
     name: cleanString(data.name, 60) || "Midnight Premiere",
     public: data.isPublic !== false,
     hostId: owner.id,
+    creatorUsername: owner.username,
+    hostUsername: owner.username,
+    hostSecret: secret,
+    hostGraceTimer: null,
     users: new Map(),
     seats: new Map(),
     movie: { ...DEFAULT_MOVIE, updatedAt: Date.now() },
@@ -233,7 +242,7 @@ function createRoom(owner: ClientSession, data: { name?: string; isPublic?: bool
   return room;
 }
 
-function joinRoom(client: ClientSession, room: RoomSession, username: string) {
+function joinRoom(client: ClientSession, room: RoomSession, username: string, providedHostSecret?: string) {
   leaveRoom(client, false);
   if (room.users.size >= (room.maxUsers || MAX_USERS_PER_ROOM)) {
     throw new Error("This theatre is full.");
@@ -244,15 +253,43 @@ function joinRoom(client: ClientSession, room: RoomSession, username: string) {
   client.avatarColor = AVATAR_COLORS[client.colorIndex];
   room.users.set(client.id, client);
 
+  // Host Authority Restoration:
+  // If this client holds the hostSecret OR matches the creatorUsername:
+  const isAuthorizedHost =
+    (providedHostSecret && room.hostSecret && providedHostSecret === room.hostSecret) ||
+    (room.creatorUsername && client.username.toLowerCase() === room.creatorUsername.toLowerCase());
+
+  if (isAuthorizedHost) {
+    if (room.hostGraceTimer) {
+      clearTimeout(room.hostGraceTimer);
+      room.hostGraceTimer = null;
+    }
+    const previousHostId = room.hostId;
+    room.hostId = client.id;
+    room.hostUsername = client.username;
+    if (previousHostId !== client.id) {
+      broadcast(room, {
+        type: "host-changed",
+        hostId: room.hostId,
+        username: client.username
+      });
+      broadcast(room, {
+        type: "movie-state",
+        state: movieState(room)
+      });
+    }
+  }
+
   if (!room.lighting) {
     room.lighting = { ...DEFAULT_LIGHTING };
   }
 
-  // Send joined confirmation with full room snapshot
+  // Send joined confirmation with full room snapshot and hostSecret (if host)
   send(client, {
     type: "joined",
     userId: client.id,
     selfId: client.id,
+    hostSecret: room.hostId === client.id ? room.hostSecret : undefined,
     room: {
       id: room.id,
       name: room.name,
@@ -318,24 +355,39 @@ function leaveRoom(client: ClientSession, notify = true) {
     });
   }
 
-  // Promote next host if host left
+  // Host Disconnection Grace Period:
+  // If the host disconnected, do NOT immediately strip host privileges!
+  // Start a 60-second grace window allowing the host to reconnect seamlessly.
   if (wasHost && room.users.size > 0) {
-    const nextHost = room.users.values().next().value;
-    if (nextHost) {
-      room.hostId = nextHost.id;
-      broadcast(room, {
-        type: "host-changed",
-        hostId: room.hostId,
-        username: nextHost.username
-      });
-      broadcast(room, {
-        type: "movie-state",
-        state: movieState(room)
-      });
+    if (room.hostGraceTimer) {
+      clearTimeout(room.hostGraceTimer);
     }
+    room.hostGraceTimer = setTimeout(() => {
+      room.hostGraceTimer = null;
+      if (room.users.size > 0 && !room.users.has(room.hostId)) {
+        const nextHost = room.users.values().next().value;
+        if (nextHost) {
+          room.hostId = nextHost.id;
+          room.hostUsername = nextHost.username;
+          broadcast(room, {
+            type: "host-changed",
+            hostId: room.hostId,
+            username: nextHost.username
+          });
+          broadcast(room, {
+            type: "movie-state",
+            state: movieState(room)
+          });
+        }
+      }
+    }, 60000);
   }
 
   if (room.users.size === 0) {
+    if (room.hostGraceTimer) {
+      clearTimeout(room.hostGraceTimer);
+      room.hostGraceTimer = null;
+    }
     rooms.delete(room.id);
   }
 
@@ -1286,6 +1338,12 @@ function handleMessage(client: ClientSession, raw: any) {
   const rawStr = typeof raw === "string" ? raw : raw.toString();
   if (rawStr.length > MAX_MESSAGE_SIZE) return;
 
+  // Any message received resets ping counters and keeps connection alive
+  if (client.socket) {
+    (client.socket as any).isAlive = true;
+    (client.socket as any).missedPings = 0;
+  }
+
   let message: any;
   try {
     message = JSON.parse(rawStr);
@@ -1303,7 +1361,7 @@ function handleMessage(client: ClientSession, raw: any) {
       client.username = username;
       client.characterType = cleanString(message.characterType || "character_406814", 32);
       const newRoom = createRoom(client, { name, isPublic: message.isPublic !== false });
-      joinRoom(client, newRoom, username);
+      joinRoom(client, newRoom, username, newRoom.hostSecret);
       break;
     }
 
@@ -1316,9 +1374,10 @@ function handleMessage(client: ClientSession, raw: any) {
         return;
       }
       const username = cleanUsername(message.username) || client.username;
+      const providedSecret = cleanString(message.hostSecret, 64) || undefined;
       client.characterType = cleanString(message.characterType || "character_406814", 32);
       try {
-        joinRoom(client, targetRoom, username);
+        joinRoom(client, targetRoom, username, providedSecret);
       } catch (err: any) {
         send(client, { type: "error", message: err.message });
       }
@@ -1950,6 +2009,19 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
     return;
   }
 
+  // Check if fully transcoded / cached MP4 file is available on disk for instant local Range streaming
+  const diskCachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
+  if (fs.existsSync(diskCachePath)) {
+    try {
+      const stat = fs.statSync(diskCachePath);
+      if (stat.size > 1024 * 512) {
+        console.log(`[GDrive Stream] Serving cached transcoded file for ${fileId} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+        serveRangeFromFile(req, res, diskCachePath, true);
+        return;
+      }
+    } catch {}
+  }
+
   const clientRange = req.headers.range as string | undefined;
 
   // Use cached direct CDN URL to serve subsequent Range chunks with zero redirect latency & zero rate-limiting
@@ -2076,6 +2148,9 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
           expiresAt: Date.now() + 3 * 3600 * 1000
         });
 
+        const cachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
+        const tempPath = path.join(CACHE_DIR, `gdrive-${fileId}.tmp.mp4`);
+
         res.writeHead(200, {
           "Content-Type": "video/mp4",
           "Access-Control-Allow-Origin": "*",
@@ -2103,11 +2178,37 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         const ffmpegCmd = getFfmpegCommand();
         const ff = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["pipe", "pipe", "pipe"] });
 
+        let fileOut: fs.WriteStream | null = null;
+        try {
+          fileOut = fs.createWriteStream(tempPath);
+        } catch {}
+
         proxyRes.pipe(ff.stdin);
         ff.stdout.pipe(res);
+        if (fileOut) {
+          ff.stdout.pipe(fileOut);
+        }
 
         ff.stderr.on("data", (chunk) => {
           console.warn(`[GDrive Stream] ffmpeg stderr for ${fileId}:`, chunk.toString().slice(0, 200));
+        });
+
+        ff.on("close", (code) => {
+          if (fileOut) {
+            fileOut.close(() => {
+              if (code === 0 && fs.existsSync(tempPath)) {
+                try {
+                  const stat = fs.statSync(tempPath);
+                  if (stat.size > 1024 * 512) {
+                    fs.renameSync(tempPath, cachePath);
+                    console.log(`[GDrive Stream] Successfully cached transcoded MP4 to ${cachePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+                  }
+                } catch (err: any) {
+                  console.warn(`[GDrive Stream] Rename error for ${fileId}:`, err.message);
+                }
+              }
+            });
+          }
         });
 
         ff.on("error", (err) => {
@@ -2129,6 +2230,9 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         req.on("close", () => {
           try { ff.kill("SIGKILL"); } catch {}
           try { proxyReq.destroy(); } catch {}
+          if (fileOut) {
+            try { fileOut.destroy(); } catch {}
+          }
         });
 
         return;
@@ -2298,14 +2402,21 @@ app.prepare().then(() => {
     });
   });
 
-  // 10-second WebSocket heartbeat interval to keep Render connections alive & prune dead sockets
+  // 20-second WebSocket heartbeat interval with 3-miss tolerance (60s grace) to prevent premature disconnection
   const heartbeatInterval = setInterval(() => {
     wss.clients.forEach((socket: any) => {
-      if (socket.isAlive === false) return socket.terminate();
+      if (socket.isAlive === false) {
+        socket.missedPings = (socket.missedPings || 0) + 1;
+        if (socket.missedPings >= 3) {
+          return socket.terminate();
+        }
+      } else {
+        socket.missedPings = 0;
+      }
       socket.isAlive = false;
       socket.ping();
     });
-  }, 10000);
+  }, 20000);
 
   // Automatic 10-second background self-ping if deployed on Render to keep instance from sleeping
   const renderExternalUrl = process.env.RENDER_EXTERNAL_URL;

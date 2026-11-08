@@ -76,6 +76,7 @@ function CinemaApp() {
   const currentSeatRef = useRef<SeatData | null>(null);
   const isChatOpenRef = useRef<boolean>(false);
   const showToastRef = useRef(showToast);
+  const lastHardSeekTimeRef = useRef<number>(0);
 
   useEffect(() => {
     selfIdRef.current = selfId;
@@ -131,23 +132,43 @@ function CinemaApp() {
   const playVideoSafe = useCallback((video: HTMLVideoElement) => {
     const engine = engineRef.current;
     if (engine) engine.showVideoTexture();
-    const p = video.play();
-    if (p !== undefined) {
-      p.catch((err) => {
-        if (err.name === "NotAllowedError") {
-          // Autoplay was blocked: start video muted so visuals immediately render on cinema screen
-          video.muted = true;
-          video.play()
-            .then(() => {
-              if (engine) engine.showVideoTexture();
-              setIsPlaybackGateOpen(true);
-            })
-            .catch(() => {
-              setIsPlaybackGateOpen(true);
-            });
-        }
-      });
-    }
+
+    const doPlay = () => {
+      const p = video.play();
+      if (p !== undefined) {
+        p.then(() => {
+          if (engine) engine.showVideoTexture();
+        }).catch((err) => {
+          if (err.name === "NotAllowedError") {
+            // Autoplay blocked by browser policy: play muted immediately so cinema visual works, then prompt user to unmute
+            video.muted = true;
+            video.play()
+              .then(() => {
+                if (engine) engine.showVideoTexture();
+                setIsPlaybackGateOpen(true);
+              })
+              .catch(() => {
+                setIsPlaybackGateOpen(true);
+              });
+          } else if (err.name === "AbortError") {
+            // Play request was interrupted by a pending seek or state change; retry when seek finishes
+            if (video.seeking) {
+              const onSeeked = () => {
+                video.removeEventListener("seeked", onSeeked);
+                if (video.paused) doPlay();
+              };
+              video.addEventListener("seeked", onSeeked, { once: true });
+            } else {
+              setTimeout(() => {
+                if (video.paused) doPlay();
+              }, 150);
+            }
+          }
+        });
+      }
+    };
+
+    doPlay();
   }, []);
 
   // Universal Media Loader: maps all videos directly onto the curved 3D cinema screen
@@ -194,8 +215,7 @@ function CinemaApp() {
       typeof window !== "undefined" &&
       !targetUrl.startsWith(window.location.origin) &&
       !targetUrl.includes("localhost:3000") &&
-      !targetUrl.includes("/api/") &&
-      !isHls;
+      !targetUrl.includes("/api/");
 
     if (isExternal && !targetUrl.includes("/api/video-proxy")) {
       targetUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
@@ -216,8 +236,18 @@ function CinemaApp() {
       try {
         if (targetResumeTime > 0 && isFinite(targetResumeTime)) {
           video.currentTime = targetResumeTime;
-        }
-        if (shouldPlay) {
+          if (shouldPlay) {
+            const onSeeked = () => {
+              video.removeEventListener("seeked", onSeeked);
+              playVideoSafe(video);
+            };
+            video.addEventListener("seeked", onSeeked, { once: true });
+            setTimeout(() => {
+              video.removeEventListener("seeked", onSeeked);
+              if (video.paused) playVideoSafe(video);
+            }, 400);
+          }
+        } else if (shouldPlay) {
           playVideoSafe(video);
         }
       } catch {}
@@ -362,11 +392,17 @@ function CinemaApp() {
       if (msg.rooms) setPublicRooms(msg.rooms);
     });
 
-    socketClient.on("joined", (msg: { userId: string; room: RoomDetail; movie: MovieState; users: UserData[]; lighting?: LightingState }) => {
+    socketClient.on("joined", (msg: { userId: string; room: RoomDetail; movie: MovieState; users: UserData[]; lighting?: LightingState; hostSecret?: string }) => {
       setSelfId(msg.userId);
       setCurrentRoom(msg.room);
       setUsers(msg.room.users || []);
       setInRoom(true);
+
+      if (msg.hostSecret && typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem(`moviq_host_secret_${msg.room.id.toUpperCase()}`, msg.hostSecret);
+        } catch {}
+      }
 
       if (msg.movie) {
         setMovie(msg.movie);
@@ -439,9 +475,7 @@ function CinemaApp() {
 
           // Set movie video source with exact current playback time & auto-resume state
           if (msg.movie && msg.movie.url) {
-            const now = Date.now();
-            const elapsed = msg.movie.playing && msg.movie.updatedAt ? (now - msg.movie.updatedAt) / 1000 : 0;
-            const currentPlaybackTime = Math.max(0, (msg.movie.time || 0) + elapsed);
+            const currentPlaybackTime = Math.max(0, msg.movie.time || 0);
             const shouldAutoPlay = !!msg.movie.playing;
             applyMediaSource(msg.movie.url, quality, currentPlaybackTime, shouldAutoPlay);
           }
@@ -517,17 +551,28 @@ function CinemaApp() {
       const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
       const targetTime = Math.max(0, msg.state.time + elapsed);
 
-      // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 1.5 seconds (NEVER on volume)
-      if (msg.action !== "volume" && (msg.action === "seek" || Math.abs(video.currentTime - targetTime) > 1.5)) {
-        try {
-          if (isFinite(targetTime) && targetTime >= 0) {
-            video.currentTime = targetTime;
-          }
-        } catch {}
+      // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 2.0 seconds (NEVER on volume)
+      if (msg.action === "seek" || (msg.action !== "volume" && Math.abs(video.currentTime - targetTime) > 2.0)) {
+        if (!video.seeking && video.readyState >= 2) {
+          lastHardSeekTimeRef.current = now;
+          try {
+            if (isFinite(targetTime) && targetTime >= 0) {
+              video.currentTime = targetTime;
+            }
+          } catch {}
+        }
       }
 
       if (msg.state.playing && video.paused) {
-        playVideoSafe(video);
+        if (video.seeking) {
+          const onSeeked = () => {
+            video.removeEventListener("seeked", onSeeked);
+            playVideoSafe(video);
+          };
+          video.addEventListener("seeked", onSeeked, { once: true });
+        } else {
+          playVideoSafe(video);
+        }
       } else if (!msg.state.playing && !video.paused) {
         video.pause();
         if (!msg.state.url && engine) {
@@ -562,25 +607,33 @@ function CinemaApp() {
       // 1. Play / Pause state synchronization
       if (msg.playing && video.paused) {
         playVideoSafe(video);
+        return; // Avoid seeking in the same tick as initiating play
       } else if (!msg.playing && !video.paused) {
         video.pause();
+        return;
       }
 
-      // 2. High-precision sync algorithm:
-      // - Drift > 1.2s: hard seek immediately so clients snap into sync
-      // - Drift between 0.25s and 1.2s: slew playbackRate by +8% or -8% (smooth catch-up)
-      // - Drift <= 0.25s: 1.0x playback rate (tight audio lock)
-      if (Math.abs(drift) > 1.2) {
-        if (video.readyState >= 1) {
-          try {
-            video.currentTime = targetTime;
-          } catch {}
-        }
+      // CRITICAL: NEVER interrupt an in-progress seek!
+      if (video.seeking) {
+        return;
+      }
+
+      // 2. High-precision sync algorithm without stalls:
+      // - If drift is minor/moderate (0.3s to 2.5s): smoothly slew playbackRate (+6% or -6%)
+      // - If drift is large (> 2.5s) AND at least 4s since last seek AND video ready: throttled hard seek
+      const absDrift = Math.abs(drift);
+      const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
+
+      if (absDrift > 2.5 && timeSinceLastSeek > 4000 && video.readyState >= 2) {
+        lastHardSeekTimeRef.current = now;
+        try {
+          video.currentTime = targetTime;
+        } catch {}
         video.playbackRate = 1.0;
-      } else if (drift > 0.25) {
-        video.playbackRate = 1.08;
-      } else if (drift < -0.25) {
-        video.playbackRate = 0.92;
+      } else if (drift > 0.3) {
+        video.playbackRate = 1.06;
+      } else if (drift < -0.3) {
+        video.playbackRate = 0.94;
       } else {
         video.playbackRate = 1.0;
       }
@@ -670,11 +723,18 @@ function CinemaApp() {
   };
 
   const handleJoinRoom = (roomId: string, username: string, charType: string) => {
+    let hostSecret: string | null = null;
+    if (typeof window !== "undefined") {
+      try {
+        hostSecret = sessionStorage.getItem(`moviq_host_secret_${roomId.toUpperCase()}`);
+      } catch {}
+    }
     socketClient.send({
       type: "join-room",
       roomId,
       username,
-      characterType: charType
+      characterType: charType,
+      hostSecret: hostSecret || undefined
     });
   };
 
