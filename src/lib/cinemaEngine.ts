@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
-import { CSS3DRenderer, CSS3DObject } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import {
   AudioSpatialMode,
   CameraMode,
@@ -387,10 +386,6 @@ export class CinemaEngine {
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
   private lastVideoTime: number = -1;
 
-  public cssScene: THREE.Scene | null = null;
-  public cssRenderer: CSS3DRenderer | null = null;
-  private youtubeScreenContainer: HTMLDivElement | null = null;
-  private youtubeCssObject: CSS3DObject | null = null;
   public isMobileDevice: boolean = false;
 
   private lastSentPos: THREE.Vector3 = new THREE.Vector3(9999, 9999, 9999);
@@ -438,14 +433,13 @@ export class CinemaEngine {
     this.isMobileDevice = typeof navigator !== "undefined" && (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || ("ontouchstart" in window));
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: !this.isMobileDevice,
-      powerPreference: "high-performance",
-      precision: this.isMobileDevice ? "mediump" : "highp"
+      antialias: true,
+      powerPreference: "high-performance"
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(this.isMobileDevice ? 1.0 : Math.min(window.devicePixelRatio || 1, 1.5));
-    this.renderer.shadowMap.enabled = !this.isMobileDevice;
-    this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2.0));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (THREE.SRGBColorSpace) {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
@@ -453,19 +447,6 @@ export class CinemaEngine {
     this.renderer.toneMappingExposure = 1.30;
 
     container.appendChild(this.renderer.domElement);
-
-    // Hardware CSS3D Perspective Renderer for high-FPS YouTube integration
-    this.cssScene = new THREE.Scene();
-    this.cssRenderer = new CSS3DRenderer();
-    this.cssRenderer.setSize(width, height);
-    this.cssRenderer.domElement.style.position = "absolute";
-    this.cssRenderer.domElement.style.top = "0";
-    this.cssRenderer.domElement.style.left = "0";
-    this.cssRenderer.domElement.style.width = "100%";
-    this.cssRenderer.domElement.style.height = "100%";
-    this.cssRenderer.domElement.style.pointerEvents = "none";
-    this.cssRenderer.domElement.id = "cinema-css3d-mount";
-    container.appendChild(this.cssRenderer.domElement);
 
     this.clock = new THREE.Clock();
 
@@ -553,13 +534,50 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    const grad = ctx.createRadialGradient(960, 540, 160, 960, 540, 1150);
-    grad.addColorStop(0, "#3b82f6");
-    grad.addColorStop(0.35, "#2563eb");
-    grad.addColorStop(0.7, "#1d4ed8");
-    grad.addColorStop(1, "#0d1b3e");
+    const grad = ctx.createRadialGradient(960, 540, 180, 960, 540, 1100);
+    grad.addColorStop(0, "#1d4ed8");
+    grad.addColorStop(0.3, "#0f2b6b");
+    grad.addColorStop(0.7, "#081330");
+    grad.addColorStop(1, "#020617");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
+
+    // Subtle cinema grid pattern
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
+    ctx.lineWidth = 1;
+    for (let x = 0; x < 1920; x += 80) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 1080);
+      ctx.stroke();
+    }
+    for (let y = 0; y < 1080; y += 80) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(1920, y);
+      ctx.stroke();
+    }
+
+    // Crisp glowing cinematic branding
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.shadowColor = "#60a5fa";
+    ctx.shadowBlur = 40;
+    ctx.font = "900 110px 'Segoe UI', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("MOVIQ", 960, 480);
+
+    ctx.shadowBlur = 0;
+    ctx.font = "600 30px 'Segoe UI', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "#93c5fd";
+    ctx.fillText("PREMIERE MULTIPLEX AUDITORIUM", 960, 565);
+
+    ctx.font = "400 22px 'Segoe UI', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "#64748b";
+    ctx.fillText("Select a movie from controls below or paste a video link to begin", 960, 620);
+    ctx.restore();
 
     return new THREE.CanvasTexture(canvas);
   }
@@ -917,7 +935,7 @@ export class CinemaEngine {
     const screenHeight = 13.8;
     const curveRadius = 34.0;
 
-    const screenGeo = new THREE.PlaneGeometry(screenWidth, screenHeight, 48, 16);
+    const screenGeo = new THREE.PlaneGeometry(screenWidth, screenHeight, 128, 32);
     const pos = screenGeo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
@@ -962,33 +980,6 @@ export class CinemaEngine {
     this.screenMesh.position.set(0, 7.30, -18.2);
     this.scene.add(this.screenMesh);
 
-    // Hardware CSS3D Perspective Mount for Synchronized YouTube Playback
-    const ytContainer = document.createElement("div");
-    ytContainer.id = "cinema-youtube-screen";
-    ytContainer.style.width = "1280px";
-    ytContainer.style.height = "720px";
-    ytContainer.style.backgroundColor = "#000000";
-    ytContainer.style.display = "none";
-    ytContainer.style.pointerEvents = "none";
-    ytContainer.style.overflow = "hidden";
-    ytContainer.style.borderRadius = "2px";
-
-    const ytMount = document.createElement("div");
-    ytMount.id = "youtube-player-mount";
-    ytMount.style.width = "100%";
-    ytMount.style.height = "100%";
-    ytContainer.appendChild(ytMount);
-
-    this.youtubeScreenContainer = ytContainer;
-    this.youtubeCssObject = new CSS3DObject(ytContainer);
-    this.youtubeCssObject.position.set(0, 7.30, -18.17);
-    const cssScaleX = screenWidth / 1280;
-    const cssScaleY = screenHeight / 720;
-    this.youtubeCssObject.scale.set(cssScaleX, cssScaleY, cssScaleX);
-    if (this.cssScene) {
-      this.cssScene.add(this.youtubeCssObject);
-    }
-
     // Ultra-thin Sleek Black Cinema Bezel Frame around the curved screen
     const borderMat = new THREE.MeshStandardMaterial({
       color: 0x05070c,
@@ -1001,8 +992,8 @@ export class CinemaEngine {
     const frameGeo = new THREE.PlaneGeometry(
       screenWidth + frameThickness * 2,
       screenHeight + frameThickness * 2,
-      48,
-      16
+      128,
+      32
     );
     const fPos = frameGeo.attributes.position;
     for (let i = 0; i < fPos.count; i++) {
@@ -1169,15 +1160,6 @@ export class CinemaEngine {
       this.screenShaderMaterial.uniforms.map.value = this.defaultScreenTexture;
       this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
-    }
-  }
-
-  public showYouTubeScreen(show: boolean) {
-    if (this.youtubeScreenContainer) {
-      this.youtubeScreenContainer.style.display = show ? "block" : "none";
-    }
-    if (show) {
-      this.showStandbyTexture();
     }
   }
 
@@ -2145,6 +2127,7 @@ export class CinemaEngine {
         avatar.userData.targetRotation = msg.rotation;
       }
       if (msg.action) {
+        avatar.userData.lastAction = msg.action;
         this.playAvatarAction(avatar, msg.action, 0.2);
       }
     }
@@ -2706,12 +2689,11 @@ export class CinemaEngine {
           avatar.position.z = THREE.MathUtils.damp(avatar.position.z, targetPos.z, dampSpeed, delta);
         }
 
-        avatar.rotation.y = THREE.MathUtils.damp(
-          avatar.rotation.y,
-          avatar.userData.targetRotation as number,
-          16.0,
-          delta
-        );
+        const targetRot = (avatar.userData.targetRotation as number) || 0;
+        let rotDiff = targetRot - avatar.rotation.y;
+        while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
+        while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
+        avatar.rotation.y += rotDiff * (1 - Math.exp(-16.0 * delta));
 
         const bone = avatar.userData.headBone as THREE.Bone | null;
         if (bone) {
@@ -2751,10 +2733,6 @@ export class CinemaEngine {
     if (this.renderer && this.scene && this.camera) {
       this.renderer.render(this.scene, this.camera);
     }
-
-    if (this.cssRenderer && this.cssScene && this.camera) {
-      this.cssRenderer.render(this.cssScene, this.camera);
-    }
   }
 
   // --- Interaction & Event Binding ---
@@ -2788,9 +2766,6 @@ export class CinemaEngine {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    if (this.cssRenderer) {
-      this.cssRenderer.setSize(width, height);
-    }
   };
 
   private onKeyDown = (e: KeyboardEvent) => {
@@ -3109,9 +3084,6 @@ export class CinemaEngine {
     }
     if (this.defaultScreenTexture) {
       this.defaultScreenTexture.dispose();
-    }
-    if (this.cssRenderer && this.cssRenderer.domElement.parentElement) {
-      this.cssRenderer.domElement.parentElement.removeChild(this.cssRenderer.domElement);
     }
 
     if (this.renderer) {

@@ -61,7 +61,6 @@ function CinemaApp() {
   const [videoTime, setVideoTime] = useState<number>(0);
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [videoVolume, setVideoVolume] = useState<number>(0.8);
-  const [isYouTube, setIsYouTube] = useState<boolean>(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -69,21 +68,10 @@ function CinemaApp() {
   const engineRef = useRef<CinemaEngine | null>(null);
   const voiceManagerRef = useRef<VoiceManager | null>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const ytPlayerRef = useRef<any>(null);
-  const isYouTubeRef = useRef<boolean>(false);
-  const movieRef = useRef<MovieState>(movie);
 
   const selfIdRef = useRef<string>("");
   const isChatOpenRef = useRef<boolean>(false);
   const showToastRef = useRef(showToast);
-
-  useEffect(() => {
-    isYouTubeRef.current = isYouTube;
-  }, [isYouTube]);
-
-  useEffect(() => {
-    movieRef.current = movie;
-  }, [movie]);
 
   useEffect(() => {
     selfIdRef.current = selfId;
@@ -128,135 +116,43 @@ function CinemaApp() {
     };
   }, []);
 
-  // Asynchronously load the official YouTube IFrame Player API
-  const loadYouTubeApi = useCallback((callback: () => void) => {
-    if (typeof window === "undefined") return;
-    if ((window as any).YT && (window as any).YT.Player) {
-      callback();
-      return;
-    }
-    const existingScript = document.getElementById("youtube-iframe-api");
-    if (!existingScript) {
-      const tag = document.createElement("script");
-      tag.id = "youtube-iframe-api";
-      tag.src = "https://www.youtube.com/iframe_api";
-      const firstScriptTag = document.getElementsByTagName("script")[0];
-      firstScriptTag?.parentNode?.insertBefore(tag, firstScriptTag);
-    }
-    const prevReady = (window as any).onYouTubeIframeAPIReady;
-    (window as any).onYouTubeIframeAPIReady = () => {
-      if (typeof prevReady === "function") prevReady();
-      callback();
-    };
-  }, []);
-
-  // Universal Media Loader: handles YouTube (in 3D CSS3D space), Google Drive (via direct proxy) and direct MP4/HLS
+  // Universal Media Loader: maps all videos directly onto the curved 3D cinema screen
   const applyMediaSource = useCallback((mediaUrl: string) => {
     const video = videoRef.current;
     const engine = engineRef.current;
-    if (!mediaUrl) return;
+    if (!video || !mediaUrl) return;
 
     let targetUrl = mediaUrl.trim();
 
-    // 1. YouTube links -> hardware-accelerated 3D cinema screen
+    const apiBase = (process.env.NEXT_PUBLIC_SERVER_URL || process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
+
+    if (targetUrl.startsWith("/api/") && apiBase) {
+      targetUrl = `${apiBase}${targetUrl}`;
+    }
+
+    // 1. YouTube links -> high-FPS cinema stream
     const ytMatch = targetUrl.match(
       /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i
     );
-    let ytId: string | null = null;
-    if (ytMatch && ytMatch[1]) {
-      ytId = ytMatch[1];
+    if (ytMatch && ytMatch[1] && !targetUrl.includes("/api/youtube-stream")) {
+      targetUrl = `${apiBase}/api/youtube-stream?id=${ytMatch[1]}`;
     } else if (/^[a-zA-Z0-9_-]{11}$/.test(targetUrl) && !targetUrl.includes("/") && !targetUrl.includes(".")) {
-      ytId = targetUrl;
+      targetUrl = `${apiBase}/api/youtube-stream?id=${targetUrl}`;
+    } else if (/^-[a-zA-Z0-9_-]{11}$/.test(targetUrl) && !targetUrl.includes("/")) {
+      targetUrl = `${apiBase}/api/youtube-stream?id=${targetUrl.slice(1)}`;
     }
-
-    if (ytId) {
-      setIsYouTube(true);
-      if (video) {
-        video.pause();
-        video.src = "";
-      }
-      if (engine) {
-        engine.showYouTubeScreen(true);
-      }
-
-      loadYouTubeApi(() => {
-        const mount = document.getElementById("youtube-player-mount");
-        if (!mount) return;
-
-        if (ytPlayerRef.current && typeof ytPlayerRef.current.loadVideoById === "function") {
-          const currentMovie = movieRef.current;
-          const startSec = currentMovie.playing && currentMovie.serverTime
-            ? Math.max(0, currentMovie.time + (Date.now() - currentMovie.serverTime) / 1000)
-            : currentMovie.time || 0;
-          ytPlayerRef.current.loadVideoById({ videoId: ytId, startSeconds: startSec });
-          if (!currentMovie.playing) {
-            ytPlayerRef.current.pauseVideo();
-          }
-        } else {
-          try {
-            ytPlayerRef.current = new (window as any).YT.Player("youtube-player-mount", {
-              videoId: ytId,
-              playerVars: {
-                autoplay: 1,
-                controls: 0,
-                disablekb: 1,
-                enablejsapi: 1,
-                fs: 0,
-                modestbranding: 1,
-                rel: 0,
-                playsinline: 1,
-                origin: typeof window !== "undefined" ? window.location.origin : undefined
-              },
-              events: {
-                onReady: (event: any) => {
-                  ytPlayerRef.current = event.target;
-                  const dur = event.target.getDuration?.() || 0;
-                  if (dur > 0) setVideoDuration(dur);
-                  const currentMovie = movieRef.current;
-                  const startSec = currentMovie.playing && currentMovie.serverTime
-                    ? Math.max(0, currentMovie.time + (Date.now() - currentMovie.serverTime) / 1000)
-                    : currentMovie.time || 0;
-                  event.target.seekTo(startSec, true);
-                  if (currentMovie.playing) {
-                    event.target.playVideo();
-                  } else {
-                    event.target.pauseVideo();
-                  }
-                }
-              }
-            });
-          } catch (e) {
-            console.error("YT.Player initialization error:", e);
-          }
-        }
-      });
-      return;
-    }
-
-    // Direct Video / Google Drive / HLS
-    setIsYouTube(false);
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === "function") {
-      try {
-        ytPlayerRef.current.pauseVideo();
-      } catch {}
-    }
-    if (engine) {
-      engine.showYouTubeScreen(false);
-    }
-
-    if (!video) return;
 
     // 2. Google Drive links -> direct streaming proxy
     const gdriveMatch = targetUrl.match(
       /(?:(?:drive\.google|drive\.usercontent\.google)\.com\/(?:file\/d\/|open\?id=|uc\?id=|download\?id=)|id=)([a-zA-Z0-9_-]{20,})/i
     );
-    if (gdriveMatch && gdriveMatch[1]) {
-      targetUrl = `/api/gdrive-stream?id=${gdriveMatch[1]}`;
+    if (gdriveMatch && gdriveMatch[1] && !targetUrl.includes("/api/gdrive-stream")) {
+      targetUrl = `${apiBase}/api/gdrive-stream?id=${gdriveMatch[1]}`;
     } else if (/^[a-zA-Z0-9_-]{25,45}$/.test(targetUrl) && !targetUrl.includes("/") && !targetUrl.includes(".")) {
       targetUrl = `/api/gdrive-stream?id=${targetUrl}`;
     }
 
-    // 3. Route external direct video URLs through CORS streaming proxy
+    // 3. Route external URLs through CORS streaming proxy to prevent WebGL VideoTexture taint
     const isExternal =
       (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) &&
       typeof window !== "undefined" &&
@@ -265,7 +161,7 @@ function CinemaApp() {
       !targetUrl.includes("/api/");
 
     if (isExternal && !targetUrl.includes("/api/video-proxy")) {
-      targetUrl = `/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
+      targetUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
     }
 
     if (hlsRef.current) {
@@ -294,26 +190,7 @@ function CinemaApp() {
       video.load();
       if (engine) engine.setVideoSource(video);
     }
-  }, [loadYouTubeApi]);
-
-  // Periodic Scrubber Progress Poller for YouTube
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === "function") {
-        try {
-          const cur = ytPlayerRef.current.getCurrentTime();
-          const dur = ytPlayerRef.current.getDuration?.() || 0;
-          if (typeof cur === "number" && !isNaN(cur)) {
-            setVideoTime(cur);
-          }
-          if (typeof dur === "number" && dur > 0 && Math.abs(dur - videoDuration) > 1) {
-            setVideoDuration(dur);
-          }
-        } catch {}
-      }
-    }, 250);
-    return () => clearInterval(timer);
-  }, [videoDuration]);
+  }, []);
 
   // Video Element event listeners and CORS error fallback
   useEffect(() => {
@@ -322,6 +199,16 @@ function CinemaApp() {
 
     const onTimeUpdate = () => setVideoTime(video.currentTime);
     const onDurationChange = () => setVideoDuration(video.duration || 0);
+    const onPlay = () => {
+      if (engineRef.current) {
+        engineRef.current.showVideoTexture();
+      }
+    };
+    const onLoadedData = () => {
+      if (engineRef.current && (video.currentTime > 0 || !video.paused)) {
+        engineRef.current.showVideoTexture();
+      }
+    };
 
     const onVideoError = () => {
       const src = video.src || "";
@@ -337,12 +224,16 @@ function CinemaApp() {
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("durationchange", onDurationChange);
     video.addEventListener("loadedmetadata", onDurationChange);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("loadeddata", onLoadedData);
     video.addEventListener("error", onVideoError);
 
     return () => {
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("durationchange", onDurationChange);
       video.removeEventListener("loadedmetadata", onDurationChange);
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("loadeddata", onLoadedData);
       video.removeEventListener("error", onVideoError);
     };
   }, []);
@@ -505,70 +396,46 @@ function CinemaApp() {
       setMovie(msg.state);
       const engine = engineRef.current;
       const video = videoRef.current;
+      if (!video) return;
 
       const now = Date.now();
       const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
       const targetTime = Math.max(0, msg.state.time + elapsed);
 
-      if (isYouTubeRef.current && ytPlayerRef.current) {
-        const player = ytPlayerRef.current;
-        if (typeof player.getCurrentTime === "function") {
-          const cur = player.getCurrentTime();
-          if (Math.abs(cur - targetTime) > 0.9) {
-            player.seekTo(targetTime, true);
-          }
-        }
-        if (msg.state.playing) {
-          player.playVideo?.();
-        } else {
-          player.pauseVideo?.();
-        }
-      } else if (video) {
-        if (Math.abs(video.currentTime - targetTime) > 0.9) {
-          video.currentTime = targetTime;
-        }
+      if (Math.abs(video.currentTime - targetTime) > 0.9) {
+        video.currentTime = targetTime;
+      }
 
-        if (msg.state.playing && video.paused) {
-          if (engine) {
-            engine.showVideoTexture();
+      if (msg.state.playing && video.paused) {
+        if (engine) {
+          engine.showVideoTexture();
+        }
+        video.play().catch((err) => {
+          if (err.name === "NotAllowedError") {
+            setIsPlaybackGateOpen(true);
           }
-          video.play().catch((err) => {
-            if (err.name === "NotAllowedError") {
-              setIsPlaybackGateOpen(true);
-            }
-          });
-        } else if (!msg.state.playing && !video.paused) {
-          video.pause();
-          if (targetTime === 0 && engine) {
-            engine.showStandbyTexture();
-          }
+        });
+      } else if (!msg.state.playing && !video.paused) {
+        video.pause();
+        if (targetTime === 0 && engine) {
+          engine.showStandbyTexture();
         }
       }
 
       if (typeof msg.state.volume === "number") {
+        video.volume = msg.state.volume;
         setVideoVolume(msg.state.volume);
-        if (video) video.volume = msg.state.volume;
-        if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === "function") {
-          ytPlayerRef.current.setVolume(Math.round(msg.state.volume * 100));
-        }
       }
     });
 
     socketClient.on("movie-sync", (msg: { time: number; playing: boolean; serverTime: number }) => {
+      const video = videoRef.current;
+      if (!video) return;
       const now = Date.now();
       const latency = (now - msg.serverTime) / 1000;
       const targetTime = msg.time + latency;
-
-      if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === "function") {
-        const cur = ytPlayerRef.current.getCurrentTime();
-        if (Math.abs(cur - targetTime) > 0.85) {
-          ytPlayerRef.current.seekTo(targetTime, true);
-        }
-      } else if (videoRef.current) {
-        const video = videoRef.current;
-        if (Math.abs(video.currentTime - targetTime) > 0.85) {
-          video.currentTime = targetTime;
-        }
+      if (Math.abs(video.currentTime - targetTime) > 0.85) {
+        video.currentTime = targetTime;
       }
     });
 
@@ -722,13 +589,7 @@ function CinemaApp() {
   const handlePlayToggle = () => {
     if (!isHost) return;
     const nextState = !movie.playing;
-
-    let curTime = 0;
-    if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === "function") {
-      curTime = ytPlayerRef.current.getCurrentTime() || 0;
-    } else if (videoRef.current) {
-      curTime = videoRef.current.currentTime || 0;
-    }
+    const curTime = videoRef.current ? videoRef.current.currentTime || 0 : 0;
 
     socketClient.send({
       type: "playback",
@@ -740,9 +601,7 @@ function CinemaApp() {
   const handleSeek = (targetTime: number) => {
     if (!isHost) return;
 
-    if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === "function") {
-      ytPlayerRef.current.seekTo(targetTime, true);
-    } else if (videoRef.current) {
+    if (videoRef.current) {
       videoRef.current.currentTime = targetTime;
     }
 
@@ -755,9 +614,6 @@ function CinemaApp() {
 
   const handleVolumeChange = (vol: number) => {
     setVideoVolume(vol);
-    if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.setVolume === "function") {
-      ytPlayerRef.current.setVolume(Math.round(vol * 100));
-    }
     if (videoRef.current) {
       videoRef.current.volume = vol;
     }
@@ -849,19 +705,13 @@ function CinemaApp() {
 
   const handleEnablePlayback = () => {
     setIsPlaybackGateOpen(false);
-    if (isYouTubeRef.current && ytPlayerRef.current && typeof ytPlayerRef.current.unMute === "function") {
-      ytPlayerRef.current.unMute();
-      ytPlayerRef.current.playVideo?.();
-    }
     if (videoRef.current) {
       videoRef.current.muted = false;
       videoRef.current.play().catch(() => {});
     }
     if (engineRef.current) {
       engineRef.current.spatialAudio.resume();
-      if (!isYouTubeRef.current) {
-        engineRef.current.showVideoTexture();
-      }
+      engineRef.current.showVideoTexture();
     }
   };
 

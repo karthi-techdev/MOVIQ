@@ -1305,6 +1305,34 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         return fetchStream(proxyRes.headers.location, mergedCookies, redirectCount + 1);
       }
 
+      const upstreamType = proxyRes.headers["content-type"] || "";
+
+      if (upstreamType.includes("html")) {
+        let body = "";
+        proxyRes.setEncoding("utf8");
+        proxyRes.on("data", (chunk) => { body += chunk; });
+        proxyRes.on("end", () => {
+          const confirmMatch = body.match(/id="uc-download-link"[^>]*href="([^"]+)"/i) || body.match(/confirm=([0-9A-Za-z_-]+)/i);
+          if (confirmMatch && redirectCount < 5) {
+            const rawLink = confirmMatch[1];
+            let nextUrl = rawLink.startsWith("http")
+              ? rawLink.replace(/&amp;/g, "&")
+              : `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${rawLink}`;
+            if (rawLink.startsWith("/")) {
+              nextUrl = `https://drive.usercontent.google.com${rawLink.replace(/&amp;/g, "&")}`;
+            }
+            return fetchStream(nextUrl, mergedCookies, redirectCount + 1);
+          }
+
+          console.warn(`[GDrive Stream] Google Drive access error or quota exceeded for ${fileId}`);
+          if (!res.headersSent) {
+            res.writeHead(403, { "Content-Type": "text/plain" });
+            res.end("Google Drive download quota exceeded or file is not publicly shared.");
+          }
+        });
+        return;
+      }
+
       const statusCode = proxyRes.statusCode || 200;
       const resHeaders: Record<string, string | string[]> = {
         "Access-Control-Allow-Origin": "*",
@@ -1314,8 +1342,7 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         "Accept-Ranges": "bytes"
       };
 
-      const upstreamType = proxyRes.headers["content-type"] || "";
-      if (upstreamType.includes("html") || !upstreamType || upstreamType === "application/octet-stream") {
+      if (!upstreamType || upstreamType === "application/octet-stream") {
         resHeaders["Content-Type"] = "video/mp4";
       } else {
         resHeaders["Content-Type"] = upstreamType;
