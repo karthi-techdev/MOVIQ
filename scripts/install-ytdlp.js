@@ -30,7 +30,7 @@ function downloadFile(url, dest) {
 }
 
 async function main() {
-  console.log("[install-ytdlp] Setting up yt-dlp for cinema video streaming...");
+  console.log("[install-ytdlp] Setting up yt-dlp and ffmpeg for cinema video streaming...");
 
   const binDir = path.join(__dirname, "..", "bin");
   if (!fs.existsSync(binDir)) {
@@ -47,17 +47,15 @@ async function main() {
     "python -m pip install --upgrade yt-dlp"
   ];
 
-  let pipInstalled = false;
   for (const cmd of pipCommands) {
     try {
       execSync(cmd, { stdio: "ignore" });
       console.log(`[install-ytdlp] Successfully installed/updated via: ${cmd.split(" ")[0]}`);
-      pipInstalled = true;
       break;
     } catch {}
   }
 
-  // 2. On Linux (Render cloud hosting), download official standalone Linux binary as guaranteed fallback
+  // 2. On Linux (Render cloud hosting), download official standalone Linux yt-dlp binary as guaranteed fallback
   if (process.platform === "linux") {
     const linuxBin = path.join(binDir, "yt-dlp");
     console.log(`[install-ytdlp] Ensuring standalone Linux binary at ${linuxBin}...`);
@@ -81,6 +79,26 @@ async function main() {
         console.warn("[install-ytdlp] Warning: Failed to download Linux binary:", err.message);
       }
     }
+
+    // 3. Ensure static ffmpeg binary is available for remuxing separate 1080p video + audio
+    const ffmpegBin = path.join(binDir, "ffmpeg");
+    let hasFfmpeg = false;
+    try {
+      execSync("ffmpeg -version", { stdio: "ignore" });
+      hasFfmpeg = true;
+    } catch {}
+
+    if (!hasFfmpeg && !fs.existsSync(ffmpegBin)) {
+      console.log(`[install-ytdlp] Downloading static Linux ffmpeg to ${ffmpegBin}...`);
+      try {
+        execSync(`curl -fsSL https://github.com/eugeneware/ffmpeg-static/releases/download/b5.0.1/linux-x64 -o "${ffmpegBin}" && chmod a+rx "${ffmpegBin}"`, {
+          stdio: "inherit"
+        });
+        console.log("[install-ytdlp] Static Linux ffmpeg installed successfully!");
+      } catch (err) {
+        console.warn("[install-ytdlp] ffmpeg download notice:", err.message);
+      }
+    }
   }
 
   console.log("[install-ytdlp] Setup complete.");
@@ -88,5 +106,5 @@ async function main() {
 
 main().catch((err) => {
   console.warn("[install-ytdlp] Setup notice:", err.message);
-  process.exit(0); // Do not fail the build if pip/curl isn't available
+  process.exit(0);
 });

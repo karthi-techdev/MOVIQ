@@ -556,6 +556,17 @@ function getYtDlpRunner(): { command: string; prefixArgs: string[] } {
   };
 }
 
+function getFfmpegCommand(): string {
+  const localBin = path.join(process.cwd(), "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+  if (fs.existsSync(localBin)) {
+    try {
+      fs.chmodSync(localBin, 0o755);
+    } catch {}
+    return localBin;
+  }
+  return "ffmpeg";
+}
+
 function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
   const cacheKey = `${videoId}_${quality}`;
   const cached = ytStreamCache.get(cacheKey);
@@ -567,9 +578,10 @@ function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): P
   if (quality === "720p") maxH = 720;
   else if (quality === "480p") maxH = 480;
   else if (quality === "360p") maxH = 360;
+  else if (quality === "1080p" || quality === "auto" || quality === "high") maxH = 1080;
 
-  // Format selection prioritizing 1080p AVC1 (H.264) with fallback to pre-muxed single MP4
-  const formatString = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best[ext=mp4]/best`;
+  // Format selection strictly prioritizing 1080p Full HD AVC1 (H.264) video + high-fidelity audio
+  const formatString = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}][vcodec^=avc1]+ba/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best`;
 
   return new Promise((resolve) => {
     const runner = getYtDlpRunner();
@@ -577,7 +589,8 @@ function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): P
       ...runner.prefixArgs,
       "--no-playlist",
       "--no-warnings",
-      "--extractor-args", "youtube:player_client=android,web,tv,ios",
+      "--js-runtimes", "node:node",
+      "--remote-components", "ejs:github",
       "-g",
       "-f", formatString,
       "--",
@@ -742,7 +755,8 @@ async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerRe
     );
   }
 
-  const ffmpeg = spawn("ffmpeg", ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  const ffmpegCmd = getFfmpegCommand();
+  const ffmpeg = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
   ffmpeg.stdout.pipe(res);
 
   ffmpeg.on("error", (err) => {
@@ -1246,7 +1260,8 @@ function startGdriveTranscodeJob(fileId: string, rawUrl: string): TranscodeJob {
   ];
 
   console.log(`[GDrive Transcode] Starting background transcode for ${fileId}...`);
-  const child = spawn("ffmpeg", ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  const ffmpegCmd = getFfmpegCommand();
+  const child = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
   const job: TranscodeJob = {
     fileId,
