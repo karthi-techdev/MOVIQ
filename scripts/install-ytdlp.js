@@ -90,13 +90,24 @@ async function main() {
 
     if (!hasFfmpeg && !fs.existsSync(ffmpegBin)) {
       console.log(`[install-ytdlp] Downloading static Linux ffmpeg to ${ffmpegBin}...`);
+      let ffmpegSuccess = false;
       try {
         execSync(`curl -fsSL https://github.com/eugeneware/ffmpeg-static/releases/download/b5.0.1/linux-x64 -o "${ffmpegBin}" && chmod a+rx "${ffmpegBin}"`, {
           stdio: "inherit"
         });
+        ffmpegSuccess = true;
         console.log("[install-ytdlp] Static Linux ffmpeg installed successfully!");
       } catch (err) {
-        console.warn("[install-ytdlp] ffmpeg download notice:", err.message);
+        console.warn("[install-ytdlp] ffmpeg curl download notice:", err.message);
+      }
+
+      if (!ffmpegSuccess) {
+        try {
+          await downloadFile("https://github.com/eugeneware/ffmpeg-static/releases/download/b5.0.1/linux-x64", ffmpegBin);
+          console.log("[install-ytdlp] Static Linux ffmpeg downloaded via Node https!");
+        } catch (err) {
+          console.warn("[install-ytdlp] ffmpeg Node https download error:", err.message);
+        }
       }
     }
   }

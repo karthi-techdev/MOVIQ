@@ -515,8 +515,31 @@ interface CachedYtStream {
 }
 const ytStreamCache = new Map<string, CachedYtStream>();
 
+function getCookiesPath(): string | null {
+  const localCookies = path.join(process.cwd(), "cookies.txt");
+  if (fs.existsSync(localCookies)) return localCookies;
+
+  const renderSecretCookies = "/etc/secrets/cookies.txt";
+  if (fs.existsSync(renderSecretCookies)) return renderSecretCookies;
+
+  const envCookies = process.env.YOUTUBE_COOKIES || process.env.COOKIES_CONTENT;
+  if (envCookies && envCookies.trim()) {
+    try {
+      const decoded = envCookies.includes(" ") || envCookies.includes("\t")
+        ? envCookies
+        : Buffer.from(envCookies, "base64").toString("utf-8");
+      fs.writeFileSync(localCookies, decoded, "utf-8");
+      return localCookies;
+    } catch (e) {
+      console.warn("Failed to write YOUTUBE_COOKIES to disk:", e);
+    }
+  }
+
+  return null;
+}
+
 function getYtDlpRunner(): { command: string; prefixArgs: string[] } {
-  // 1. Check local standalone binary in bin/yt-dlp (downloaded by install-ytdlp.js on Render)
+  // 1. Check local standalone binary in bin/yt-dlp (bundled in repo / downloaded on Render)
   const localBin = path.join(process.cwd(), "bin", process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
   if (fs.existsSync(localBin)) {
     try {
@@ -557,6 +580,13 @@ function getYtDlpRunner(): { command: string; prefixArgs: string[] } {
 }
 
 function getFfmpegCommand(): string {
+  try {
+    const ffmpegStatic = require("ffmpeg-static");
+    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
+      return ffmpegStatic;
+    }
+  } catch {}
+
   const localBin = path.join(process.cwd(), "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
   if (fs.existsSync(localBin)) {
     try {
@@ -570,8 +600,8 @@ function getFfmpegCommand(): string {
 function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = []): Promise<string[]> {
   return new Promise((resolve) => {
     const runner = getYtDlpRunner();
-    const cookiesPath = path.join(process.cwd(), "cookies.txt");
-    const cookieArgs = fs.existsSync(cookiesPath) ? ["--cookies", cookiesPath] : [];
+    const cookiesPath = getCookiesPath();
+    const cookieArgs = cookiesPath ? ["--cookies", cookiesPath] : [];
 
     const spawnArgs = [
       ...runner.prefixArgs,
@@ -588,6 +618,15 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
     const ytUrlProcess = spawn(runner.command, spawnArgs);
     let stdoutData = "";
     let stderrData = "";
+
+    const timer = setTimeout(() => {
+      try {
+        ytUrlProcess.kill("SIGKILL");
+      } catch {}
+      console.warn(`[YouTube Resolve] Timed out waiting for yt-dlp on ${videoId}`);
+      resolve([]);
+    }, 25000);
+
     ytUrlProcess.stdout.on("data", (chunk) => {
       stdoutData += chunk.toString();
     });
@@ -596,6 +635,7 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
     });
 
     ytUrlProcess.on("close", (code) => {
+      clearTimeout(timer);
       if (code !== 0 || !stdoutData.trim()) {
         console.warn(`[YouTube Resolve] Attempt failed for ${videoId} (code ${code}):`, stderrData.slice(0, 250));
         resolve([]);
@@ -606,6 +646,7 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
     });
 
     ytUrlProcess.on("error", (err) => {
+      clearTimeout(timer);
       console.error("[YouTube Resolve] Spawn error:", err);
       resolve([]);
     });
@@ -625,37 +666,63 @@ async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080
   else if (quality === "360p") maxH = 360;
   else if (quality === "1080p" || quality === "auto" || quality === "high") maxH = 1080;
 
-  // Attempt 1: Full HD 1080p AVC1 with Node JS challenge solver (and cookies if provided)
+  // Format selectors:
+  // 1080p AVC1 video (h264) + m4a (AAC) audio - ideal for smooth browser hardware playback
   const format1080 = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}][vcodec^=avc1]+ba/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best`;
+  const formatGeneric = `bv*[height<=${maxH}]+ba/b[height<=${maxH}]/best`;
+
+  // Attempt 1: Apple visionos client with Node JS challenge solver (Bypasses bot challenge on datacenter IPs without cookies, yields full 1080p formats!)
+  console.log(`[YouTube Resolve] Attempt 1: visionos client for ${videoId} (${quality})...`);
   let lines = await runYtDlp(videoId, format1080, [
+    "--extractor-args", "youtube:player_client=visionos,android_vr,tv_downgraded,web",
     "--js-runtimes", "node:node",
     "--remote-components", "ejs:github"
   ]);
 
-  // Attempt 2: If challenge or datacenter bot detection blocked Attempt 1, bypass via Android player client
+  // Attempt 2: Direct visionos standalone (if multi-client had any negotiation conflict)
   if (lines.length === 0) {
-    console.log(`[YouTube Resolve] Retrying ${videoId} with Android client to bypass bot challenge...`);
-    const formatAndroid = `bv*[height<=${maxH}]+ba/b[height<=${maxH}]/best[ext=mp4]/best`;
-    lines = await runYtDlp(videoId, formatAndroid, [
-      "--extractor-args", "youtube:player_client=android"
+    console.log(`[YouTube Resolve] Attempt 2: Standalone visionos client for ${videoId}...`);
+    lines = await runYtDlp(videoId, format1080, [
+      "--extractor-args", "youtube:player_client=visionos",
+      "--js-runtimes", "node:node"
     ]);
   }
 
-  // Attempt 3: Guaranteed fallback to standard pre-muxed stream
+  // Attempt 3: Alternative device clients (tv_downgraded, android_vr)
   if (lines.length === 0) {
-    console.log(`[YouTube Resolve] Final fallback to standard format for ${videoId}...`);
-    lines = await runYtDlp(videoId, "best/b/bestvideo+bestaudio", [
-      "--extractor-args", "youtube:player_client=android,web"
+    console.log(`[YouTube Resolve] Attempt 3: Device clients (tv_downgraded, android_vr) for ${videoId}...`);
+    lines = await runYtDlp(videoId, formatGeneric, [
+      "--extractor-args", "youtube:player_client=tv_downgraded,android_vr,android"
+    ]);
+  }
+
+  // Attempt 4: Best available pre-muxed or standard stream
+  if (lines.length === 0) {
+    console.log(`[YouTube Resolve] Attempt 4: Best available stream for ${videoId}...`);
+    lines = await runYtDlp(videoId, "best/b/bestvideo+bestaudio/18", [
+      "--extractor-args", "youtube:player_client=visionos,tv_downgraded,android,web"
     ]);
   }
 
   if (lines.length === 0) {
+    console.error(`[YouTube Resolve] All 4 resolution attempts failed for ${videoId}`);
     return null;
   }
 
+  let videoUrl = lines[0];
+  let audioUrl = lines.length > 1 ? lines[1] : null;
+
+  // Detect if audio came first
+  if (lines.length > 1) {
+    if (lines[0].includes("mime=audio") && lines[1].includes("mime=video")) {
+      videoUrl = lines[1];
+      audioUrl = lines[0];
+    }
+  }
+
   const result: CachedYtStream = {
-    videoUrl: lines[0],
-    audioUrl: lines.length > 1 ? lines[1] : null,
+    videoUrl,
+    audioUrl,
     expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
   };
   ytStreamCache.set(cacheKey, result);
