@@ -2,7 +2,7 @@ import http from "http";
 import https from "https";
 import fs from "fs";
 import path from "path";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { parse } from "url";
 import crypto from "crypto";
 import next from "next";
@@ -515,6 +515,47 @@ interface CachedYtStream {
 }
 const ytStreamCache = new Map<string, CachedYtStream>();
 
+function getYtDlpRunner(): { command: string; prefixArgs: string[] } {
+  // 1. Check local standalone binary in bin/yt-dlp (downloaded by install-ytdlp.js on Render)
+  const localBin = path.join(process.cwd(), "bin", process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
+  if (fs.existsSync(localBin)) {
+    try {
+      fs.chmodSync(localBin, 0o755);
+    } catch {}
+    return { command: localBin, prefixArgs: [] };
+  }
+
+  // 2. Check if yt-dlp is in system PATH
+  try {
+    const res = spawnSync(process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp", ["--version"], { timeout: 3000 });
+    if (res.status === 0) {
+      return { command: process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp", prefixArgs: [] };
+    }
+  } catch {}
+
+  // 3. Check python3 -m yt_dlp (standard on Ubuntu/Debian/Render)
+  try {
+    const res = spawnSync("python3", ["-m", "yt_dlp", "--version"], { timeout: 3000 });
+    if (res.status === 0) {
+      return { command: "python3", prefixArgs: ["-m", "yt_dlp"] };
+    }
+  } catch {}
+
+  // 4. Check python -m yt_dlp (standard on Windows)
+  try {
+    const res = spawnSync("python", ["-m", "yt_dlp", "--version"], { timeout: 3000 });
+    if (res.status === 0) {
+      return { command: "python", prefixArgs: ["-m", "yt_dlp"] };
+    }
+  } catch {}
+
+  // Fallback to python3 on Linux, python on Windows
+  return {
+    command: process.platform === "win32" ? "python" : "python3",
+    prefixArgs: ["-m", "yt_dlp"]
+  };
+}
+
 function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
   const cacheKey = `${videoId}_${quality}`;
   const cached = ytStreamCache.get(cacheKey);
@@ -527,19 +568,23 @@ function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): P
   else if (quality === "480p") maxH = 480;
   else if (quality === "360p") maxH = 360;
 
-  // Format selection prioritizing 1080p AVC1 (H.264) for maximum GPU decoding smoothness & 60fps/24fps source preservation
-  const formatString = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}][vcodec^=avc1]/b[height<=${maxH}]/best`;
+  // Format selection prioritizing 1080p AVC1 (H.264) with fallback to pre-muxed single MP4
+  const formatString = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best[ext=mp4]/best`;
 
   return new Promise((resolve) => {
-    const ytUrlProcess = spawn("python", [
-      "-m", "yt_dlp",
+    const runner = getYtDlpRunner();
+    const spawnArgs = [
+      ...runner.prefixArgs,
       "--no-playlist",
       "--no-warnings",
+      "--extractor-args", "youtube:player_client=android,web,tv,ios",
       "-g",
       "-f", formatString,
       "--",
       `https://www.youtube.com/watch?v=${videoId}`
-    ]);
+    ];
+
+    const ytUrlProcess = spawn(runner.command, spawnArgs);
 
     let stdoutData = "";
     let stderrData = "";
