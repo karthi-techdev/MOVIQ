@@ -1,13 +1,3 @@
----
-title: MOVIQ 3D Virtual Cinema
-emoji: 🎥
-colorFrom: purple
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # MOVIQ — 3D Virtual Cinema
 
 A Next.js and Three.js multiplayer virtual cinema. Users can create or join a theatre, occupy synchronized seats, chat, talk over WebRTC voice and watch host-controlled synchronized movies on an immersive curved 3D cinema screen.
