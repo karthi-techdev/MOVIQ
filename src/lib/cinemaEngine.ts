@@ -534,20 +534,28 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    // Authentic mild white theater projection screen material (clean, matte, neutral)
-    const grad = ctx.createRadialGradient(960, 540, 120, 960, 540, 1150);
-    grad.addColorStop(0, "#f8fafc"); // Mild pearl white in center
-    grad.addColorStop(0.55, "#f1f5f9"); // Subtle soft cinema screen body
-    grad.addColorStop(0.85, "#e2e8f0"); // Mild screen falloff toward edges
-    grad.addColorStop(1.0, "#d8e0e9"); // Soft edge vignette before bezel
+    // Natural ambient dim white cinema projection screen material adapted to theater lighting
+    const grad = ctx.createRadialGradient(960, 540, 100, 960, 540, 1150);
+    grad.addColorStop(0, "#73829c"); // Dim matte white catching ambient auditorium light
+    grad.addColorStop(0.4, "#5d6d87"); // Natural soft cinema screen body
+    grad.addColorStop(0.75, "#425068"); // Gentle shadow falloff toward edges
+    grad.addColorStop(1.0, "#2c3647"); // Soft ambient vignette near bezel
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
 
-    // Ultra-fine cinema projection screen micro-texture (acoustic matte screen fabric)
-    ctx.fillStyle = "rgba(100, 116, 139, 0.02)";
+    // Ultra-fine cinema screen micro-perforation fabric texture
+    ctx.fillStyle = "rgba(255, 255, 255, 0.04)";
     for (let y = 0; y < 1080; y += 4) {
       for (let x = 0; x < 1920; x += 4) {
         if ((x + y) % 8 === 0) {
+          ctx.fillRect(x, y, 1.5, 1.5);
+        }
+      }
+    }
+    ctx.fillStyle = "rgba(0, 0, 0, 0.05)";
+    for (let y = 2; y < 1080; y += 4) {
+      for (let x = 2; x < 1920; x += 4) {
+        if ((x + y) % 8 === 4) {
           ctx.fillRect(x, y, 1.5, 1.5);
         }
       }
@@ -987,7 +995,7 @@ export class CinemaEngine {
     this.scene.add(frameMesh);
 
     // Dynamic projection bounce light casting natural neutral bounce onto stage and auditorium
-    this.screenLight = new THREE.PointLight(0xf1f5f9, 2.5, 45, 0.8);
+    this.screenLight = new THREE.PointLight(0xf1f5f9, 0.0, 45, 0.8);
     this.screenLight.position.set(0, 7.30, -15.5);
     this.scene.add(this.screenLight);
   }
@@ -1127,8 +1135,7 @@ export class CinemaEngine {
       this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
       if (this.screenLight) {
-        this.screenLight.color.setHex(0xf1f5f9);
-        this.screenLight.intensity = 2.0;
+        this.screenLight.intensity = 0.0;
       }
     }
   }
