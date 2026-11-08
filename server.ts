@@ -517,23 +517,61 @@ interface CachedYtStream {
 const ytStreamCache = new Map<string, CachedYtStream>();
 
 function getCookiesPath(): string | null {
-  const localCookies = path.join(process.cwd(), "cookies.txt");
-  if (fs.existsSync(localCookies)) return localCookies;
-
-  const renderSecretCookies = "/etc/secrets/cookies.txt";
-  if (fs.existsSync(renderSecretCookies)) return renderSecretCookies;
-
-  const envCookies = process.env.YOUTUBE_COOKIES || process.env.COOKIES_CONTENT;
+  const envCookies = process.env.YOUTUBE_COOKIES || process.env.YTDLP_COOKIES || process.env.COOKIES_CONTENT;
   if (envCookies && envCookies.trim()) {
     try {
-      const decoded = envCookies.includes(" ") || envCookies.includes("\t")
-        ? envCookies
-        : Buffer.from(envCookies, "base64").toString("utf-8");
-      fs.writeFileSync(localCookies, decoded, "utf-8");
-      return localCookies;
-    } catch (e) {
-      console.warn("Failed to write YOUTUBE_COOKIES to disk:", e);
+      let rawText = envCookies.trim();
+      // Check if it's base64 encoded
+      if (!rawText.includes("\t") && !rawText.includes(" ") && rawText.length > 50) {
+        try {
+          const decoded = Buffer.from(rawText, "base64").toString("utf-8");
+          if (decoded.includes(".youtube.com") || decoded.includes("youtube") || decoded.includes("\t")) {
+            rawText = decoded;
+          }
+        } catch {}
+      }
+
+      // Ensure Netscape cookie header if missing
+      if (!rawText.startsWith("# Netscape HTTP Cookie File")) {
+        rawText = `# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file! Do not edit.\n\n${rawText}`;
+      }
+
+      const candidatePaths = [
+        path.join(process.platform === "win32" ? process.cwd() : "/tmp", "cookies.txt"),
+        path.join(process.cwd(), "cookies.txt")
+      ];
+
+      for (const p of candidatePaths) {
+        try {
+          fs.writeFileSync(p, rawText, "utf-8");
+          console.log(`[Cookies] Successfully loaded and wrote cookies from environment variable to: ${p}`);
+          return p;
+        } catch {}
+      }
+    } catch (e: any) {
+      console.warn("[Cookies] Failed to write env cookies to disk:", e.message);
     }
+  }
+
+  // Check Render Secret File location
+  const renderSecretCookies = "/etc/secrets/cookies.txt";
+  if (fs.existsSync(renderSecretCookies)) {
+    console.log(`[Cookies] Using Render Secret File cookies at: ${renderSecretCookies}`);
+    return renderSecretCookies;
+  }
+
+  // Check local file in cwd
+  const localCookies = path.join(process.cwd(), "cookies.txt");
+  if (fs.existsSync(localCookies)) {
+    console.log(`[Cookies] Using local cookies file at: ${localCookies}`);
+    return localCookies;
+  }
+
+  // Check /tmp/cookies.txt
+  const tmpCookies = path.join("/tmp", "cookies.txt");
+  if (fs.existsSync(tmpCookies)) {
+    console.log(`[Cookies] Using /tmp cookies file at: ${tmpCookies}`);
+    return tmpCookies;
   }
 
   return null;
@@ -604,6 +642,12 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
     const cookiesPath = getCookiesPath();
     const cookieArgs = cookiesPath ? ["--cookies", cookiesPath] : [];
 
+    if (cookieArgs.length > 0) {
+      console.log(`[YouTube Resolve] Attached authenticated cookies to yt-dlp: ${cookiesPath}`);
+    } else {
+      console.log(`[YouTube Resolve] No cookies detected (running in anonymous mode)`);
+    }
+
     const spawnArgs = [
       ...runner.prefixArgs,
       ...cookieArgs,
@@ -656,13 +700,11 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
 
 // ==========================================
 // YOUTUBE RESOLVER ENGINE SWITCH (Backend Code)
-// Set USE_PIPED to true to use Piped/Invidious REST API
-// Set USE_YOUTUBEI to true to use youtubei.js (Innertube)
-// Set USE_YTDLP to true to use yt-dlp binary
+// Priority: yt-dlp enabled with cookies
 // ==========================================
-const USE_PIPED = true;
+const USE_YTDLP = true;
 const USE_YOUTUBEI = false;
-const USE_YTDLP = false;
+const USE_PIPED = false;
 
 const PIPED_API_INSTANCES = [
   "https://pipedapi.kavin.rocks",
@@ -862,19 +904,18 @@ async function resolveYouTubeStreamWithYtDlp(videoId: string, quality: string = 
   const format1080 = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}][vcodec^=avc1]+ba/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best`;
   const formatGeneric = `bv*[height<=${maxH}]+ba/b[height<=${maxH}]/best`;
 
-  // Attempt 1: Apple visionos client with Node JS challenge solver (Bypasses bot challenge on datacenter IPs without cookies, yields full 1080p formats!)
-  console.log(`[YouTube Resolve] Attempt 1: visionos client for ${videoId} (${quality})...`);
+  // Attempt 1: Full HD 1080p AVC1 format (with authenticated cookies if provided)
+  console.log(`[YouTube Resolve] Attempt 1: 1080p AVC1 format for ${videoId} (${quality})...`);
   let lines = await runYtDlp(videoId, format1080, [
-    "--extractor-args", "youtube:player_client=visionos,android_vr,tv_downgraded,web",
     "--js-runtimes", "node:node",
     "--remote-components", "ejs:github"
   ]);
 
-  // Attempt 2: Direct visionos standalone (if multi-client had any negotiation conflict)
+  // Attempt 2: visionos client with Node JS challenge solver
   if (lines.length === 0) {
-    console.log(`[YouTube Resolve] Attempt 2: Standalone visionos client for ${videoId}...`);
+    console.log(`[YouTube Resolve] Attempt 2: visionos client for ${videoId}...`);
     lines = await runYtDlp(videoId, format1080, [
-      "--extractor-args", "youtube:player_client=visionos",
+      "--extractor-args", "youtube:player_client=visionos,android_vr,tv_downgraded,web",
       "--js-runtimes", "node:node"
     ]);
   }
@@ -927,16 +968,16 @@ async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080
 
   let result: CachedYtStream | null = null;
 
-  if (USE_PIPED) {
-    console.log(`[YouTube Resolver] Active Engine: Piped REST API for ${videoId} (${quality})`);
-    result = await resolveYouTubeStreamWithPiped(videoId, quality);
+  if (USE_YTDLP) {
+    console.log(`[YouTube Resolver] Active Engine: yt-dlp (with cookies) for ${videoId} (${quality})`);
+    result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
     if (!result) {
-      console.warn(`[YouTube Resolver] Piped API returned no stream for ${videoId}, falling back to Innertube engine...`);
+      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to Innertube engine...`);
       result = await resolveYouTubeStreamWithInnertube(videoId, quality);
     }
     if (!result) {
-      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to yt-dlp engine...`);
-      result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
+      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to Piped engine...`);
+      result = await resolveYouTubeStreamWithPiped(videoId, quality);
     }
   } else if (USE_YOUTUBEI) {
     console.log(`[YouTube Resolver] Active Engine: youtubei.js (Innertube) for ${videoId} (${quality})`);
@@ -950,15 +991,15 @@ async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080
       result = await resolveYouTubeStreamWithPiped(videoId, quality);
     }
   } else {
-    console.log(`[YouTube Resolver] Active Engine: yt-dlp for ${videoId} (${quality})`);
-    result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
+    console.log(`[YouTube Resolver] Active Engine: Piped REST API for ${videoId} (${quality})`);
+    result = await resolveYouTubeStreamWithPiped(videoId, quality);
     if (!result) {
-      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to youtubei.js engine...`);
+      console.warn(`[YouTube Resolver] Piped API returned no stream for ${videoId}, falling back to Innertube engine...`);
       result = await resolveYouTubeStreamWithInnertube(videoId, quality);
     }
     if (!result) {
-      console.warn(`[YouTube Resolver] youtubei.js returned no stream for ${videoId}, falling back to Piped engine...`);
-      result = await resolveYouTubeStreamWithPiped(videoId, quality);
+      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to yt-dlp engine...`);
+      result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
     }
   }
 
