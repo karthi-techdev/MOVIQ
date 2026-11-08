@@ -567,38 +567,25 @@ function getFfmpegCommand(): string {
   return "ffmpeg";
 }
 
-function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
-  const cacheKey = `${videoId}_${quality}`;
-  const cached = ytStreamCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return Promise.resolve(cached);
-  }
-
-  let maxH = 1080;
-  if (quality === "720p") maxH = 720;
-  else if (quality === "480p") maxH = 480;
-  else if (quality === "360p") maxH = 360;
-  else if (quality === "1080p" || quality === "auto" || quality === "high") maxH = 1080;
-
-  // Format selection strictly prioritizing 1080p Full HD AVC1 (H.264) video + high-fidelity audio
-  const formatString = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}][vcodec^=avc1]+ba/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best`;
-
+function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = []): Promise<string[]> {
   return new Promise((resolve) => {
     const runner = getYtDlpRunner();
+    const cookiesPath = path.join(process.cwd(), "cookies.txt");
+    const cookieArgs = fs.existsSync(cookiesPath) ? ["--cookies", cookiesPath] : [];
+
     const spawnArgs = [
       ...runner.prefixArgs,
+      ...cookieArgs,
       "--no-playlist",
       "--no-warnings",
-      "--js-runtimes", "node:node",
-      "--remote-components", "ejs:github",
       "-g",
       "-f", formatString,
+      ...extraArgs,
       "--",
       `https://www.youtube.com/watch?v=${videoId}`
     ];
 
     const ytUrlProcess = spawn(runner.command, spawnArgs);
-
     let stdoutData = "";
     let stderrData = "";
     ytUrlProcess.stdout.on("data", (chunk) => {
@@ -610,31 +597,69 @@ function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): P
 
     ytUrlProcess.on("close", (code) => {
       if (code !== 0 || !stdoutData.trim()) {
-        console.error(`[YouTube Resolve] Error resolving ${videoId} (code ${code}):`, stderrData.slice(0, 300));
-        resolve(null);
+        console.warn(`[YouTube Resolve] Attempt failed for ${videoId} (code ${code}):`, stderrData.slice(0, 250));
+        resolve([]);
         return;
       }
-
       const lines = stdoutData.trim().split(/\r?\n/).filter((l) => l.startsWith("http"));
-      if (lines.length === 0) {
-        resolve(null);
-        return;
-      }
-
-      const result: CachedYtStream = {
-        videoUrl: lines[0],
-        audioUrl: lines.length > 1 ? lines[1] : null,
-        expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
-      };
-      ytStreamCache.set(cacheKey, result);
-      resolve(result);
+      resolve(lines);
     });
 
     ytUrlProcess.on("error", (err) => {
       console.error("[YouTube Resolve] Spawn error:", err);
-      resolve(null);
+      resolve([]);
     });
   });
+}
+
+async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
+  const cacheKey = `${videoId}_${quality}`;
+  const cached = ytStreamCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+
+  let maxH = 1080;
+  if (quality === "720p") maxH = 720;
+  else if (quality === "480p") maxH = 480;
+  else if (quality === "360p") maxH = 360;
+  else if (quality === "1080p" || quality === "auto" || quality === "high") maxH = 1080;
+
+  // Attempt 1: Full HD 1080p AVC1 with Node JS challenge solver (and cookies if provided)
+  const format1080 = `bv*[height<=${maxH}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=${maxH}][vcodec^=avc1]+ba/bv*[height<=${maxH}]+ba/b[height<=${maxH}][ext=mp4]/b[height<=${maxH}]/best`;
+  let lines = await runYtDlp(videoId, format1080, [
+    "--js-runtimes", "node:node",
+    "--remote-components", "ejs:github"
+  ]);
+
+  // Attempt 2: If challenge or datacenter bot detection blocked Attempt 1, bypass via Android player client
+  if (lines.length === 0) {
+    console.log(`[YouTube Resolve] Retrying ${videoId} with Android client to bypass bot challenge...`);
+    const formatAndroid = `bv*[height<=${maxH}]+ba/b[height<=${maxH}]/best[ext=mp4]/best`;
+    lines = await runYtDlp(videoId, formatAndroid, [
+      "--extractor-args", "youtube:player_client=android"
+    ]);
+  }
+
+  // Attempt 3: Guaranteed fallback to standard pre-muxed stream
+  if (lines.length === 0) {
+    console.log(`[YouTube Resolve] Final fallback to standard format for ${videoId}...`);
+    lines = await runYtDlp(videoId, "best/b/bestvideo+bestaudio", [
+      "--extractor-args", "youtube:player_client=android,web"
+    ]);
+  }
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const result: CachedYtStream = {
+    videoUrl: lines[0],
+    audioUrl: lines.length > 1 ? lines[1] : null,
+    expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
+  };
+  ytStreamCache.set(cacheKey, result);
+  return result;
 }
 
 async function handleYouTubeStream(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: any) {

@@ -5,7 +5,7 @@
   "main": "server.ts",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "next build",
+    "build": "node scripts/install-ytdlp.js && next build",
     "start": "tsx server.ts",
     "postinstall": "node scripts/install-ytdlp.js"
   },
