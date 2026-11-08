@@ -656,10 +656,110 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
 
 // ==========================================
 // YOUTUBE RESOLVER ENGINE SWITCH (Backend Code)
+// Set USE_PIPED to true to use Piped/Invidious REST API
 // Set USE_YOUTUBEI to true to use youtubei.js (Innertube)
-// Set USE_YOUTUBEI to false to use yt-dlp binary
+// Set USE_YTDLP to true to use yt-dlp binary
 // ==========================================
-const USE_YOUTUBEI = true;
+const USE_PIPED = true;
+const USE_YOUTUBEI = false;
+const USE_YTDLP = false;
+
+const PIPED_API_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.adminforge.de",
+  "https://api.piped.private.coffee",
+  "https://pipedapi.leptons.xyz",
+  "https://piped-api.lunar.icu",
+  "https://pa.il.ax",
+  "https://pipedapi.tokhmi.xyz"
+];
+
+function fetchPipedJson(url: string, timeoutMs: number = 3500): Promise<any> {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(url);
+      const transport = parsed.protocol === "https:" ? https : http;
+      const req = transport.get(
+        url,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+          },
+          timeout: timeoutMs
+        },
+        (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            return fetchPipedJson(res.headers.location, timeoutMs).then(resolve);
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return resolve(null);
+          }
+          let data = "";
+          res.on("data", (chunk) => (data += chunk));
+          res.on("end", () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              resolve(null);
+            }
+          });
+        }
+      );
+      req.on("error", () => resolve(null));
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function resolveYouTubeStreamWithPiped(videoId: string, quality: string = "1080p"): Promise<CachedYtStream | null> {
+  let maxH = 1080;
+  if (quality === "720p") maxH = 720;
+  else if (quality === "480p") maxH = 480;
+  else if (quality === "360p") maxH = 360;
+  else if (quality === "1080p" || quality === "auto" || quality === "high") maxH = 1080;
+
+  for (const base of PIPED_API_INSTANCES) {
+    try {
+      const url = `${base.replace(/\/$/, "")}/streams/${videoId}`;
+      const data = await fetchPipedJson(url, 3000);
+      if (!data) continue;
+
+      const videoStreams: any[] = data.videoStreams || [];
+      const audioStreams: any[] = data.audioStreams || [];
+
+      // Filter MP4/AVC1 videos up to maxH
+      const mp4Videos = videoStreams.filter(
+        (v) => v.url && v.format === "MPEG_4" && (v.height || 0) <= maxH
+      );
+      mp4Videos.sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
+
+      // Best audio (prefer M4A/AAC)
+      const mp4Audios = audioStreams.filter((a) => a.url && a.format === "M4A");
+      mp4Audios.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+      const chosenVideo = mp4Videos[0] || videoStreams.filter((v) => v.url && (v.height || 0) <= maxH)[0];
+      const chosenAudio = mp4Audios[0] || audioStreams.filter((a) => a.url)[0];
+
+      if (chosenVideo) {
+        console.log(`[Piped API] Resolved ${videoId} via ${base} -> ${chosenVideo.quality || chosenVideo.height}`);
+        return {
+          videoUrl: chosenVideo.url,
+          audioUrl: chosenAudio ? chosenAudio.url : null,
+          expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
+        };
+      }
+    } catch {}
+  }
+
+  return null;
+}
 
 let innertubeInstance: any = null;
 let innertubePromise: Promise<any> | null = null;
@@ -827,19 +927,38 @@ async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080
 
   let result: CachedYtStream | null = null;
 
-  if (USE_YOUTUBEI) {
-    console.log(`[YouTube Resolver] Engine: youtubei.js (Innertube) for ${videoId} (${quality})`);
+  if (USE_PIPED) {
+    console.log(`[YouTube Resolver] Active Engine: Piped REST API for ${videoId} (${quality})`);
+    result = await resolveYouTubeStreamWithPiped(videoId, quality);
+    if (!result) {
+      console.warn(`[YouTube Resolver] Piped API returned no stream for ${videoId}, falling back to Innertube engine...`);
+      result = await resolveYouTubeStreamWithInnertube(videoId, quality);
+    }
+    if (!result) {
+      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to yt-dlp engine...`);
+      result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
+    }
+  } else if (USE_YOUTUBEI) {
+    console.log(`[YouTube Resolver] Active Engine: youtubei.js (Innertube) for ${videoId} (${quality})`);
     result = await resolveYouTubeStreamWithInnertube(videoId, quality);
     if (!result) {
       console.warn(`[YouTube Resolver] youtubei.js returned no stream for ${videoId}, falling back to yt-dlp engine...`);
       result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
     }
+    if (!result) {
+      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to Piped engine...`);
+      result = await resolveYouTubeStreamWithPiped(videoId, quality);
+    }
   } else {
-    console.log(`[YouTube Resolver] Engine: yt-dlp for ${videoId} (${quality})`);
+    console.log(`[YouTube Resolver] Active Engine: yt-dlp for ${videoId} (${quality})`);
     result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
     if (!result) {
       console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to youtubei.js engine...`);
       result = await resolveYouTubeStreamWithInnertube(videoId, quality);
+    }
+    if (!result) {
+      console.warn(`[YouTube Resolver] youtubei.js returned no stream for ${videoId}, falling back to Piped engine...`);
+      result = await resolveYouTubeStreamWithPiped(videoId, quality);
     }
   }
 
