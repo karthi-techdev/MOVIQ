@@ -165,13 +165,17 @@ function CinemaApp() {
       targetUrl = `/api/gdrive-stream?id=${targetUrl}&quality=${currentQ}`;
     }
 
-    // 3. Route external URLs through CORS streaming proxy to prevent WebGL VideoTexture taint
+    // 3. Route external direct video URLs through CORS streaming proxy to prevent WebGL VideoTexture taint
+    // IMPORTANT: Do NOT proxy .m3u8 HLS playlists with video-proxy!
+    // Hls.js runs in-browser and must resolve relative child playlists and .ts segments directly against the remote CDN origin.
+    const isHls = targetUrl.includes(".m3u8");
     const isExternal =
       (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) &&
       typeof window !== "undefined" &&
       !targetUrl.startsWith(window.location.origin) &&
       !targetUrl.includes("localhost:3000") &&
-      !targetUrl.includes("/api/");
+      !targetUrl.includes("/api/") &&
+      !isHls;
 
     if (isExternal && !targetUrl.includes("/api/video-proxy")) {
       targetUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
@@ -192,13 +196,16 @@ function CinemaApp() {
       video.addEventListener("loadedmetadata", onResume, { once: true });
     }
 
-    if (targetUrl.includes(".m3u8")) {
+    if (isHls || targetUrl.includes(".m3u8")) {
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = targetUrl;
         video.load();
         if (engine) engine.setVideoSource(video);
       } else if (Hls.isSupported()) {
-        const hls = new Hls({ enableWorker: true });
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false
+        });
         hls.loadSource(targetUrl);
         hls.attachMedia(video);
         hlsRef.current = hls;
@@ -261,7 +268,7 @@ function CinemaApp() {
 
     const onVideoError = () => {
       const src = video.src || "";
-      if (src && src.startsWith("http") && !src.includes("/api/")) {
+      if (src && src.startsWith("http") && !src.includes("/api/") && !src.includes(".m3u8")) {
         console.warn("Direct video load failed (likely CORS or format). Retrying via streaming /api/video-proxy...", src);
         const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
         const proxyUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(src)}`;
