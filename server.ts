@@ -1970,6 +1970,81 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         return;
       }
 
+      const contentDisposition = String(proxyRes.headers["content-disposition"] || "");
+      const isEac3OrMkv =
+        upstreamType.includes("matroska") ||
+        upstreamType.includes("mkv") ||
+        contentDisposition.toLowerCase().includes(".mkv") ||
+        parsedUrl.pathname === "/api/eac3-stream" ||
+        parsedUrl.query?.eac3 === "1" ||
+        parsedUrl.query?.audio === "aac";
+
+      // If Google Drive file has MKV container or EAC3/AC3 audio, remux on-the-fly to AAC stereo
+      if (isEac3OrMkv) {
+        proxyReq.destroy();
+        console.log(`[GDrive Stream] Detected MKV / EAC3 audio container for ${fileId}. Transcoding audio on-the-fly to AAC stereo...`);
+
+        // Cache successful direct stream URL for future seeks
+        gdriveResolvedCache.set(fileId!, {
+          directUrl: targetUrl,
+          cookies: mergedCookies,
+          expiresAt: Date.now() + 3 * 3600 * 1000
+        });
+
+        const startTime = Math.max(0, parseFloat((parsedUrl.query?.t || parsedUrl.query?.start || 0) as string) || 0);
+
+        res.writeHead(200, {
+          "Content-Type": "video/mp4",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+          "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+          "Cache-Control": "no-cache, no-store",
+          "Connection": "keep-alive"
+        });
+
+        const ffmpegArgs: string[] = [
+          "-hide_banner",
+          "-loglevel", "error",
+          "-headers", `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nCookie: ${mergedCookies}\r\n`,
+        ];
+
+        if (startTime > 0) {
+          ffmpegArgs.push("-ss", String(startTime));
+        }
+
+        ffmpegArgs.push(
+          "-i", targetUrl,
+          "-c:v", "copy",
+          "-c:a", "aac",
+          "-b:a", "192k",
+          "-ac", "2",
+          "-max_muxing_queue_size", "4096",
+          "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+          "-f", "mp4",
+          "pipe:1"
+        );
+
+        const ffmpegCmd = getFfmpegCommand();
+        const ff = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+        ff.stdout.pipe(res);
+
+        ff.on("error", (err) => {
+          console.error(`[GDrive Stream] FFmpeg EAC3 transcode error for ${fileId}:`, err);
+          if (!res.headersSent) {
+            res.writeHead(500, { "Content-Type": "text/plain" });
+            res.end("EAC3 audio transcode error");
+          }
+        });
+
+        req.on("close", () => {
+          try {
+            ff.kill("SIGKILL");
+          } catch {}
+        });
+
+        return;
+      }
+
       const statusCode = proxyRes.statusCode || 200;
       const resHeaders: Record<string, string | string[]> = {
         "Access-Control-Allow-Origin": "*",
