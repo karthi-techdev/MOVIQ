@@ -55,14 +55,14 @@ async function main() {
     } catch {}
   }
 
-  // 2. On Linux (Render cloud hosting), download official standalone Linux yt-dlp binary as guaranteed fallback
+  // 2. On Linux (Render cloud hosting), download official standalone compiled Linux yt-dlp binary (bundled PyInstaller) as guaranteed fallback
   if (process.platform === "linux") {
     const linuxBin = path.join(binDir, "yt-dlp");
     console.log(`[install-ytdlp] Ensuring standalone Linux binary at ${linuxBin}...`);
 
     let curlSuccess = false;
     try {
-      execSync(`curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o "${linuxBin}" && chmod a+rx "${linuxBin}"`, {
+      execSync(`curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o "${linuxBin}" && chmod a+rx "${linuxBin}"`, {
         stdio: "inherit"
       });
       curlSuccess = true;
@@ -73,7 +73,7 @@ async function main() {
 
     if (!curlSuccess) {
       try {
-        await downloadFile("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp", linuxBin);
+        await downloadFile("https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux", linuxBin);
         console.log("[install-ytdlp] Standalone Linux yt-dlp binary downloaded via Node https.");
       } catch (err) {
         console.warn("[install-ytdlp] Warning: Failed to download Linux binary:", err.message);

@@ -516,65 +516,137 @@ interface CachedYtStream {
 }
 const ytStreamCache = new Map<string, CachedYtStream>();
 
-function getCookiesPath(): string | null {
-  const envCookies = process.env.YOUTUBE_COOKIES || process.env.YTDLP_COOKIES || process.env.COOKIES_CONTENT;
-  if (envCookies && envCookies.trim()) {
-    try {
-      let rawText = envCookies.trim();
-      // Check if it's base64 encoded
-      if (!rawText.includes("\t") && !rawText.includes(" ") && rawText.length > 50) {
-        try {
-          const decoded = Buffer.from(rawText, "base64").toString("utf-8");
-          if (decoded.includes(".youtube.com") || decoded.includes("youtube") || decoded.includes("\t")) {
-            rawText = decoded;
-          }
-        } catch {}
+let cachedCookiePath: string | null = null;
+let cachedCookieHeader: string | null = null;
+let lastCookieSourceHash: string = "";
+
+function processCookieContent(raw: string, existingPath: string | null): { filePath: string | null; headerString: string | null } {
+  try {
+    let text = raw.trim();
+    // Handle escaped newlines from environment variables
+    text = text.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+
+    // Check if Base64 encoded
+    if (!text.includes("\t") && !text.includes(" ") && text.length > 50) {
+      try {
+        const decoded = Buffer.from(text, "base64").toString("utf-8");
+        if (decoded.includes("youtube") || decoded.includes("\t") || decoded.includes("# Netscape")) {
+          text = decoded;
+        }
+      } catch {}
+    }
+
+    const lines = text.split(/\r?\n/);
+    const outLines: string[] = ["# Netscape HTTP Cookie File", "# Generated & Sanitized by MOVIQ", ""];
+    const cookiePairs: string[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+
+      // Handle both tab-separated and space-separated lines (e.g. from web form copy-paste)
+      let parts = trimmed.split("\t");
+      if (parts.length < 7) {
+        parts = trimmed.split(/\s+/);
       }
 
-      // Ensure Netscape cookie header if missing
-      if (!rawText.startsWith("# Netscape HTTP Cookie File")) {
-        rawText = `# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n# This is a generated file! Do not edit.\n\n${rawText}`;
+      if (parts.length >= 7) {
+        const [domain, flag, cookiePath, secure, expiration, name, ...valParts] = parts;
+        const value = valParts.join(" ");
+        outLines.push([domain, flag, cookiePath, secure, expiration, name, value].join("\t"));
+        cookiePairs.push(`${name}=${value}`);
       }
+    }
 
+    const headerString = cookiePairs.length > 0 ? cookiePairs.join("; ") : null;
+    const sanitizedFile = outLines.join("\n") + "\n";
+
+    let targetPath = existingPath;
+    if (!targetPath) {
       const candidatePaths = [
         path.join(process.platform === "win32" ? process.cwd() : "/tmp", "cookies.txt"),
         path.join(process.cwd(), "cookies.txt")
       ];
-
       for (const p of candidatePaths) {
         try {
-          fs.writeFileSync(p, rawText, "utf-8");
-          console.log(`[Cookies] Successfully loaded and wrote cookies from environment variable to: ${p}`);
-          return p;
+          fs.writeFileSync(p, sanitizedFile, "utf-8");
+          targetPath = p;
+          console.log(`[Cookies] Successfully sanitized and wrote cookies to: ${p} (${cookiePairs.length} valid cookies)`);
+          break;
         } catch {}
       }
-    } catch (e: any) {
-      console.warn("[Cookies] Failed to write env cookies to disk:", e.message);
     }
+
+    return { filePath: targetPath, headerString };
+  } catch (err: any) {
+    console.warn("[Cookies] Error processing cookies:", err.message);
+    return { filePath: existingPath, headerString: null };
+  }
+}
+
+function parseAndPrepareCookies(): { filePath: string | null; headerString: string | null } {
+  const envCookies = process.env.YOUTUBE_COOKIES || process.env.YTDLP_COOKIES || process.env.COOKIES_CONTENT;
+  const currentHash = String(envCookies || "").trim();
+
+  if (currentHash && currentHash === lastCookieSourceHash && cachedCookiePath) {
+    return { filePath: cachedCookiePath, headerString: cachedCookieHeader };
+  }
+
+  if (envCookies && envCookies.trim()) {
+    const res = processCookieContent(envCookies, null);
+    cachedCookiePath = res.filePath;
+    cachedCookieHeader = res.headerString;
+    lastCookieSourceHash = currentHash;
+    return res;
   }
 
   // Check Render Secret File location
   const renderSecretCookies = "/etc/secrets/cookies.txt";
   if (fs.existsSync(renderSecretCookies)) {
-    console.log(`[Cookies] Using Render Secret File cookies at: ${renderSecretCookies}`);
-    return renderSecretCookies;
+    try {
+      const content = fs.readFileSync(renderSecretCookies, "utf-8");
+      const res = processCookieContent(content, renderSecretCookies);
+      cachedCookiePath = res.filePath;
+      cachedCookieHeader = res.headerString;
+      return res;
+    } catch {}
   }
 
   // Check local file in cwd
   const localCookies = path.join(process.cwd(), "cookies.txt");
   if (fs.existsSync(localCookies)) {
-    console.log(`[Cookies] Using local cookies file at: ${localCookies}`);
-    return localCookies;
+    try {
+      const content = fs.readFileSync(localCookies, "utf-8");
+      const res = processCookieContent(content, localCookies);
+      cachedCookiePath = res.filePath;
+      cachedCookieHeader = res.headerString;
+      return res;
+    } catch {}
   }
 
   // Check /tmp/cookies.txt
   const tmpCookies = path.join("/tmp", "cookies.txt");
   if (fs.existsSync(tmpCookies)) {
-    console.log(`[Cookies] Using /tmp cookies file at: ${tmpCookies}`);
-    return tmpCookies;
+    try {
+      const content = fs.readFileSync(tmpCookies, "utf-8");
+      const res = processCookieContent(content, tmpCookies);
+      cachedCookiePath = res.filePath;
+      cachedCookieHeader = res.headerString;
+      return res;
+    } catch {}
   }
 
-  return null;
+  return { filePath: null, headerString: null };
+}
+
+function getCookiesPath(): string | null {
+  const { filePath } = parseAndPrepareCookies();
+  return filePath;
+}
+
+function getCookiesHeader(): string | null {
+  const { headerString } = parseAndPrepareCookies();
+  return headerString;
 }
 
 function getYtDlpRunner(): { command: string; prefixArgs: string[] } {
@@ -670,7 +742,7 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
       } catch {}
       console.warn(`[YouTube Resolve] Timed out waiting for yt-dlp on ${videoId}`);
       resolve([]);
-    }, 25000);
+    }, 6000);
 
     ytUrlProcess.stdout.on("data", (chunk) => {
       stdoutData += chunk.toString();
@@ -700,10 +772,10 @@ function runYtDlp(videoId: string, formatString: string, extraArgs: string[] = [
 
 // ==========================================
 // YOUTUBE RESOLVER ENGINE SWITCH (Backend Code)
-// Priority: yt-dlp enabled with cookies
+// Priority: Innertube (VISIONOS) primary with authenticated cookies + yt-dlp fallback
 // ==========================================
+const USE_YOUTUBEI = true;
 const USE_YTDLP = true;
-const USE_YOUTUBEI = false;
 const USE_PIPED = false;
 
 const PIPED_API_INSTANCES = [
@@ -812,9 +884,17 @@ async function getInnertube(): Promise<any> {
 
   innertubePromise = (async () => {
     try {
-      const yt = await Innertube.create({
+      const cookieHeader = getCookiesHeader();
+      const options: any = {
         client_type: ClientType.VISIONOS
-      });
+      };
+      if (cookieHeader) {
+        options.cookie = cookieHeader;
+        console.log(`[Innertube] Initialized VISIONOS client with authenticated cookies`);
+      } else {
+        console.log(`[Innertube] Initialized VISIONOS client in anonymous mode`);
+      }
+      const yt = await Innertube.create(options);
       innertubeInstance = yt;
       return yt;
     } catch (err: any) {
@@ -851,9 +931,15 @@ async function resolveYouTubeStreamWithInnertube(videoId: string, quality: strin
     );
     avc1Videos.sort((a: any, b: any) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
 
-    // 2. Select best MP4 audio (AAC)
+    // 2. Select best audio (prefer MP4 AAC, fallback to any audio stream)
     const mp4Audios = adaptive.filter((f: any) => f.mimeType?.includes("audio/mp4") && f.url);
     mp4Audios.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+    let chosenAudio = mp4Audios[0];
+    if (!chosenAudio) {
+      const anyAudios = adaptive.filter((f: any) => f.mimeType?.includes("audio") && f.url);
+      anyAudios.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+      chosenAudio = anyAudios[0];
+    }
 
     let chosenVideo = avc1Videos[0];
     if (!chosenVideo) {
@@ -864,11 +950,19 @@ async function resolveYouTubeStreamWithInnertube(videoId: string, quality: strin
       chosenVideo = anyMp4Videos[0];
     }
 
+    if (!chosenVideo) {
+      const anyAdaptiveVideos = adaptive.filter(
+        (f: any) => f.height && f.height <= maxH && f.url
+      );
+      anyAdaptiveVideos.sort((a: any, b: any) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0));
+      chosenVideo = anyAdaptiveVideos[0];
+    }
+
     if (chosenVideo) {
-      console.log(`[Innertube] Resolved ${videoId} -> ${chosenVideo.qualityLabel || chosenVideo.height + "p"} (${chosenVideo.mimeType}) + audio itag ${mp4Audios[0]?.itag}`);
+      console.log(`[Innertube] Resolved ${videoId} -> ${chosenVideo.qualityLabel || chosenVideo.height + "p"} (${chosenVideo.mimeType}) + audio itag ${chosenAudio?.itag}`);
       return {
         videoUrl: chosenVideo.url,
-        audioUrl: mp4Audios.length > 0 ? mp4Audios[0].url : null,
+        audioUrl: chosenAudio ? chosenAudio.url : null,
         expiresAt: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
       };
     }
@@ -907,37 +1001,20 @@ async function resolveYouTubeStreamWithYtDlp(videoId: string, quality: string = 
   // Attempt 1: Full HD 1080p AVC1 format (with authenticated cookies if provided)
   console.log(`[YouTube Resolve] Attempt 1: 1080p AVC1 format for ${videoId} (${quality})...`);
   let lines = await runYtDlp(videoId, format1080, [
-    "--js-runtimes", "node:node",
-    "--remote-components", "ejs:github"
+    "--extractor-args", "youtube:player_client=visionos,android_vr,tv_downgraded,web",
+    "--js-runtimes", "node:node"
   ]);
 
-  // Attempt 2: visionos client with Node JS challenge solver
+  // Attempt 2: Best available stream fallback
   if (lines.length === 0) {
-    console.log(`[YouTube Resolve] Attempt 2: visionos client for ${videoId}...`);
-    lines = await runYtDlp(videoId, format1080, [
-      "--extractor-args", "youtube:player_client=visionos,android_vr,tv_downgraded,web",
-      "--js-runtimes", "node:node"
-    ]);
-  }
-
-  // Attempt 3: Alternative device clients (tv_downgraded, android_vr)
-  if (lines.length === 0) {
-    console.log(`[YouTube Resolve] Attempt 3: Device clients (tv_downgraded, android_vr) for ${videoId}...`);
+    console.log(`[YouTube Resolve] Attempt 2: Best available stream for ${videoId}...`);
     lines = await runYtDlp(videoId, formatGeneric, [
-      "--extractor-args", "youtube:player_client=tv_downgraded,android_vr,android"
-    ]);
-  }
-
-  // Attempt 4: Best available pre-muxed or standard stream
-  if (lines.length === 0) {
-    console.log(`[YouTube Resolve] Attempt 4: Best available stream for ${videoId}...`);
-    lines = await runYtDlp(videoId, "best/b/bestvideo+bestaudio/18", [
       "--extractor-args", "youtube:player_client=visionos,tv_downgraded,android,web"
     ]);
   }
 
   if (lines.length === 0) {
-    console.error(`[YouTube Resolve] All 4 resolution attempts failed for ${videoId}`);
+    console.error(`[YouTube Resolve] Both resolution attempts failed for ${videoId}`);
     return null;
   }
 
@@ -968,37 +1045,37 @@ async function resolveYouTubeStreamUrls(videoId: string, quality: string = "1080
 
   let result: CachedYtStream | null = null;
 
-  if (USE_YTDLP) {
-    console.log(`[YouTube Resolver] Active Engine: yt-dlp (with cookies) for ${videoId} (${quality})`);
-    result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
-    if (!result) {
-      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to Innertube engine...`);
-      result = await resolveYouTubeStreamWithInnertube(videoId, quality);
-    }
-    if (!result) {
-      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to Piped engine...`);
-      result = await resolveYouTubeStreamWithPiped(videoId, quality);
-    }
-  } else if (USE_YOUTUBEI) {
-    console.log(`[YouTube Resolver] Active Engine: youtubei.js (Innertube) for ${videoId} (${quality})`);
+  if (USE_YOUTUBEI) {
+    console.log(`[YouTube Resolver] Active Primary Engine: youtubei.js (Innertube VISIONOS) for ${videoId} (${quality})`);
     result = await resolveYouTubeStreamWithInnertube(videoId, quality);
-    if (!result) {
-      console.warn(`[YouTube Resolver] youtubei.js returned no stream for ${videoId}, falling back to yt-dlp engine...`);
+    if (!result && USE_YTDLP) {
+      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to yt-dlp...`);
       result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
     }
-    if (!result) {
-      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to Piped engine...`);
+    if (!result && USE_PIPED) {
+      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to Piped...`);
+      result = await resolveYouTubeStreamWithPiped(videoId, quality);
+    }
+  } else if (USE_YTDLP) {
+    console.log(`[YouTube Resolver] Active Primary Engine: yt-dlp (with cookies) for ${videoId} (${quality})`);
+    result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
+    if (!result && USE_YOUTUBEI) {
+      console.warn(`[YouTube Resolver] yt-dlp returned no stream for ${videoId}, falling back to Innertube...`);
+      result = await resolveYouTubeStreamWithInnertube(videoId, quality);
+    }
+    if (!result && USE_PIPED) {
+      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to Piped...`);
       result = await resolveYouTubeStreamWithPiped(videoId, quality);
     }
   } else {
-    console.log(`[YouTube Resolver] Active Engine: Piped REST API for ${videoId} (${quality})`);
+    console.log(`[YouTube Resolver] Active Primary Engine: Piped REST API for ${videoId} (${quality})`);
     result = await resolveYouTubeStreamWithPiped(videoId, quality);
-    if (!result) {
-      console.warn(`[YouTube Resolver] Piped API returned no stream for ${videoId}, falling back to Innertube engine...`);
+    if (!result && USE_YOUTUBEI) {
+      console.warn(`[YouTube Resolver] Piped API returned no stream for ${videoId}, falling back to Innertube...`);
       result = await resolveYouTubeStreamWithInnertube(videoId, quality);
     }
-    if (!result) {
-      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to yt-dlp engine...`);
+    if (!result && USE_YTDLP) {
+      console.warn(`[YouTube Resolver] Innertube returned no stream for ${videoId}, falling back to yt-dlp...`);
       result = await resolveYouTubeStreamWithYtDlp(videoId, quality);
     }
   }
@@ -1968,6 +2045,29 @@ app.prepare().then(() => {
         status: "ok",
         uptime: Math.floor(process.uptime()),
         clients: wss.clients.size,
+        timestamp: Date.now()
+      }));
+      return;
+    }
+    if (parsedUrl.pathname === "/api/debug-status") {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      const cookieHeader = getCookiesHeader();
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: "ok",
+        activeEngines: {
+          USE_YOUTUBEI,
+          USE_YTDLP,
+          USE_PIPED
+        },
+        cookies: {
+          hasEnv: !!(process.env.YOUTUBE_COOKIES || process.env.YTDLP_COOKIES || process.env.COOKIES_CONTENT),
+          cookiesPath: getCookiesPath(),
+          cookieCount: cookieHeader ? cookieHeader.split(";").length : 0
+        },
+        uptime: Math.floor(process.uptime()),
         timestamp: Date.now()
       }));
       return;
