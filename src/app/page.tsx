@@ -48,8 +48,8 @@ function CinemaApp() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isPlaybackGateOpen, setIsPlaybackGateOpen] = useState<boolean>(false);
   const [focusMode, setFocusMode] = useState<boolean>(false);
-  const [frameMode, setFrameMode] = useState<ScreenFrameMode>("stretch");
-  const [fitMode, setFitMode] = useState<"fit" | "fill">("fill");
+  const [frameMode, setFrameMode] = useState<ScreenFrameMode>("fit");
+  const [fitMode, setFitMode] = useState<"fit" | "fill">("fit");
   const [spatialAudioEnabled, setSpatialAudioEnabled] = useState<boolean>(true);
   const [spatialAudioMode, setSpatialAudioMode] = useState<AudioSpatialMode>("atmos");
   const [quality, setQuality] = useState<VideoQuality>("auto");
@@ -638,7 +638,7 @@ function CinemaApp() {
   const handleToggleFitMode = () => {
     if (!engineRef.current) return;
     const current = engineRef.current.getFrameMode();
-    const next: ScreenFrameMode = current === "stretch" ? "fill" : current === "fill" ? "fit" : "stretch";
+    const next: ScreenFrameMode = current === "fit" ? "stretch" : current === "stretch" ? "fill" : "fit";
     handleFrameModeChange(next);
   };
 
@@ -646,17 +646,15 @@ function CinemaApp() {
     if (!engineRef.current) return;
     engineRef.current.setFrameMode(mode);
     setFrameMode(mode);
-    setFitMode(mode === "fill" || mode === "stretch" || mode === "stretch-max" ? "fill" : "fit");
+    setFitMode(mode === "fill" || mode === "stretch" ? "fill" : "fit");
     const labels: Record<ScreenFrameMode, string> = {
+      fit: "Fit Screen (Default)",
       stretch: "Stretch (Hide Black Bars)",
-      "stretch-max": "Stretch Max (Ultra Zoom)",
       fill: "Fill Screen (100% Curved)",
-      fit: "Fit Screen (Auto Original)",
       "16:9": "16:9 Widescreen (1.78:1)",
       "21:9": "21:9 Ultrawide (2.33:1)",
       "2.35:1": "2.35:1 CinemaScope",
-      "2.39:1": "2.39:1 Theatrical Anamorphic",
-      "4:3": "4:3 Classic Academy"
+      "2.39:1": "2.39:1 Theatrical Anamorphic"
     };
     showToast(`Screen Frame: ${labels[mode] || mode}`);
   };

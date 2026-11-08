@@ -381,8 +381,8 @@ export class CinemaEngine {
   private videoTexture: THREE.VideoTexture | null = null;
   public defaultScreenTexture: THREE.CanvasTexture | null = null;
   private videoAspect: number = 16 / 9;
-  private frameMode: ScreenFrameMode = "stretch";
-  private fitMode: "fit" | "fill" = "fill";
+  private frameMode: ScreenFrameMode = "fit";
+  private fitMode: "fit" | "fill" = "fit";
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
   private lastVideoTime: number = -1;
 
@@ -534,15 +534,56 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    const grad = ctx.createRadialGradient(960, 540, 160, 960, 540, 1150);
-    grad.addColorStop(0, "#3b82f6");
-    grad.addColorStop(0.35, "#2563eb");
-    grad.addColorStop(0.7, "#1d4ed8");
-    grad.addColorStop(1, "#0d1b3e");
+    const grad = ctx.createRadialGradient(960, 540, 180, 960, 540, 1100);
+    grad.addColorStop(0, "#1d4ed8");
+    grad.addColorStop(0.3, "#0f2b6b");
+    grad.addColorStop(0.7, "#081330");
+    grad.addColorStop(1, "#020617");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
 
-    return new THREE.CanvasTexture(canvas);
+    // Subtle cinema grid pattern
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
+    ctx.lineWidth = 1;
+    for (let x = 0; x < 1920; x += 80) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, 1080);
+      ctx.stroke();
+    }
+    for (let y = 0; y < 1080; y += 80) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(1920, y);
+      ctx.stroke();
+    }
+
+    // Crisp glowing cinematic branding
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.shadowColor = "#60a5fa";
+    ctx.shadowBlur = 40;
+    ctx.font = "900 110px 'Segoe UI', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("MOVIQ", 960, 480);
+
+    ctx.shadowBlur = 0;
+    ctx.font = "600 30px 'Segoe UI', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "#93c5fd";
+    ctx.fillText("PREMIERE MULTIPLEX AUDITORIUM", 960, 565);
+
+    ctx.font = "400 22px 'Segoe UI', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "#64748b";
+    ctx.fillText("Select a movie from controls below or paste a video link to begin", 960, 620);
+    ctx.restore();
+
+    const texture = new THREE.CanvasTexture(canvas);
+    if (THREE.SRGBColorSpace) {
+      texture.colorSpace = THREE.SRGBColorSpace;
+    }
+    return texture;
   }
 
   // --- Auditorium Construction ---
@@ -1009,56 +1050,12 @@ export class CinemaEngine {
     }
 
     if (this.frameMode === "stretch") {
-      // Zoom & stretch vertically to completely eliminate letterbox black bars
-      // Standard widescreen scope in 16:9 container has black bars of ~13-14% at top & bottom
-      const letterboxCropFactor = 0.71; // Safely crops 14.5% top & bottom to remove all black bars
-      const cropBar = (1.0 - letterboxCropFactor) / 2.0; // 0.145
-      const repeatY = 1.0 / letterboxCropFactor; // ~1.4085
-      const offsetY = -cropBar / letterboxCropFactor; // ~-0.2042
-      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
-      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
-      return;
-    }
-
-    if (this.frameMode === "stretch-max") {
-      // Extra zoom & stretch for ultra-widescreen films (2.55:1 or heavy letterboxing)
-      const letterboxCropFactor = 0.65; // Crops 17.5% top & bottom
-      const cropBar = (1.0 - letterboxCropFactor) / 2.0; // 0.175
-      const repeatY = 1.0 / letterboxCropFactor; // ~1.5385
-      const offsetY = -cropBar / letterboxCropFactor; // ~-0.2692
-      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
-      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
-      return;
-    }
-
-    if (this.frameMode === "2.39:1") {
-      // Theatrical Anamorphic scope (2.39:1) embedded in 16:9 container
-      const cropFactor = (16.0 / 9.0) / 2.39; // ~0.7438
-      const cropBar = (1.0 - cropFactor) / 2.0; // ~0.1281
-      const repeatY = 1.0 / cropFactor; // ~1.3444
-      const offsetY = -cropBar / cropFactor; // ~-0.1722
-      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
-      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
-      return;
-    }
-
-    if (this.frameMode === "2.35:1") {
-      // CinemaScope (2.35:1) embedded in 16:9 container
-      const cropFactor = (16.0 / 9.0) / 2.35; // ~0.7565
-      const cropBar = (1.0 - cropFactor) / 2.0; // ~0.1217
-      const repeatY = 1.0 / cropFactor; // ~1.3218
-      const offsetY = -cropBar / cropFactor; // ~-0.1609
-      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
-      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
-      return;
-    }
-
-    if (this.frameMode === "21:9") {
-      // Ultrawide (21:9 / 2.333:1) embedded in 16:9 container
-      const cropFactor = 16.0 / 21.0; // ~0.7619
-      const cropBar = (1.0 - cropFactor) / 2.0; // ~0.1190
-      const repeatY = 1.0 / cropFactor; // ~1.3125
-      const offsetY = -cropBar / cropFactor; // ~-0.1562
+      // Zoom & stretch vertically to eliminate letterbox black bars
+      // Crops ~14.5% top & bottom to completely eliminate encoded letterbox black bars
+      const letterboxCropFactor = 0.71;
+      const cropBar = (1.0 - letterboxCropFactor) / 2.0;
+      const repeatY = 1.0 / letterboxCropFactor;
+      const offsetY = -cropBar / letterboxCropFactor;
       this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, repeatY);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, offsetY);
       return;
@@ -1070,15 +1067,19 @@ export class CinemaEngine {
 
     let targetAspect: number;
     switch (this.frameMode) {
-      case "fit":
-        targetAspect = this.videoAspect || (16 / 9);
-        break;
       case "16:9":
         targetAspect = 16 / 9; // ~1.7778
         break;
-      case "4:3":
-        targetAspect = 4 / 3; // ~1.3333
+      case "21:9":
+        targetAspect = 21 / 9; // ~2.3333
         break;
+      case "2.35:1":
+        targetAspect = 2.35;
+        break;
+      case "2.39:1":
+        targetAspect = 2.39;
+        break;
+      case "fit":
       default:
         targetAspect = this.videoAspect || (16 / 9);
         break;
@@ -1090,13 +1091,13 @@ export class CinemaEngine {
     let offsetY = 0.0;
 
     if (targetAspect < screenAspect) {
-      // Narrower than screen (e.g. 16:9, 4:3) -> fit full height, pillarbox horizontally
+      // Narrower than screen (e.g. 16:9) -> fit full height, pillarbox horizontally
       repeatX = targetAspect / screenAspect;
       offsetX = (1.0 - repeatX) / 2.0;
       repeatY = 1.0;
       offsetY = 0.0;
     } else {
-      // Wider than screen -> fit full width, letterbox vertically
+      // Wider than screen (e.g. 21:9, 2.35:1, 2.39:1) -> fit full width, letterbox vertically
       repeatX = 1.0;
       offsetX = 0.0;
       repeatY = screenAspect / targetAspect;
@@ -1122,7 +1123,8 @@ export class CinemaEngine {
   public showStandbyTexture() {
     if (this.screenShaderMaterial && this.defaultScreenTexture) {
       this.screenShaderMaterial.uniforms.map.value = this.defaultScreenTexture;
-      this.applyAspectRatioFit();
+      this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
+      this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
     }
   }
 
@@ -1148,15 +1150,8 @@ export class CinemaEngine {
       if (video.videoWidth && video.videoHeight) {
         this.updateVideoAspectRatio(video.videoWidth, video.videoHeight);
       }
-      this.showVideoTexture();
     };
     video.addEventListener("loadedmetadata", onMeta);
-    video.addEventListener("loadeddata", () => {
-      this.showVideoTexture();
-    });
-    video.addEventListener("canplay", () => {
-      this.showVideoTexture();
-    });
 
     // Hardware-accelerated per-frame compositor sync for native 60fps/24fps playback
     const onVideoFrame = () => {
@@ -1196,7 +1191,7 @@ export class CinemaEngine {
     });
 
     video.addEventListener("pause", () => {
-      if (!video.src) {
+      if (video.currentTime === 0) {
         this.showStandbyTexture();
       }
     });
@@ -1205,7 +1200,8 @@ export class CinemaEngine {
       this.showStandbyTexture();
     });
 
-    if (video.src) {
+    // Idle plain white screen until playback starts
+    if (!video.paused && video.currentTime > 0) {
       this.showVideoTexture();
     } else {
       this.showStandbyTexture();

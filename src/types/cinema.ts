@@ -1,5 +1,5 @@
 export type VideoQuality = "auto" | "1080p" | "720p" | "480p" | "360p";
-export type ScreenFrameMode = "stretch" | "stretch-max" | "fill" | "fit" | "16:9" | "21:9" | "2.35:1" | "2.39:1" | "4:3";
+export type ScreenFrameMode = "fit" | "stretch" | "fill" | "16:9" | "21:9" | "2.35:1" | "2.39:1";
 export type AudioSpatialMode = "atmos" | "hall" | "stereo";
 
 export interface Vector3Like {
