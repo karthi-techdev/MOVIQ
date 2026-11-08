@@ -80,15 +80,9 @@ async function main() {
       }
     }
 
-    // 3. Ensure static ffmpeg binary is available for remuxing separate 1080p video + audio
+    // 3. Ensure static ffmpeg binary is available in bin/ffmpeg for remuxing & EAC3 audio transcoding
     const ffmpegBin = path.join(binDir, "ffmpeg");
-    let hasFfmpeg = false;
-    try {
-      execSync("ffmpeg -version", { stdio: "ignore" });
-      hasFfmpeg = true;
-    } catch {}
-
-    if (!hasFfmpeg && !fs.existsSync(ffmpegBin)) {
+    if (!fs.existsSync(ffmpegBin)) {
       console.log(`[install-ytdlp] Downloading static Linux ffmpeg to ${ffmpegBin}...`);
       let ffmpegSuccess = false;
       try {

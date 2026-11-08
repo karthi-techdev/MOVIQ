@@ -378,7 +378,8 @@ function proxyRemoteMediaStream(
   targetUrl: string,
   req: http.IncomingMessage,
   res: http.ServerResponse,
-  defaultContentType = "video/mp4"
+  defaultContentType = "video/mp4",
+  customReferer = ""
 ) {
   let parsedTarget: URL;
   try {
@@ -396,6 +397,12 @@ function proxyRemoteMediaStream(
   if (req.headers.range) {
     clientHeaders["Range"] = req.headers.range as string;
   }
+  if (customReferer) {
+    clientHeaders["Referer"] = customReferer;
+    try {
+      clientHeaders["Origin"] = new URL(customReferer).origin;
+    } catch {}
+  }
 
   const transport = parsedTarget.protocol === "https:" ? https : http;
   const proxyReq = transport.request(
@@ -410,7 +417,7 @@ function proxyRemoteMediaStream(
         proxyRes.headers.location
       ) {
         proxyReq.destroy();
-        proxyRemoteMediaStream(proxyRes.headers.location, req, res, defaultContentType);
+        proxyRemoteMediaStream(proxyRes.headers.location, req, res, defaultContentType, customReferer);
         return;
       }
 
@@ -422,6 +429,50 @@ function proxyRemoteMediaStream(
         "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
         "Accept-Ranges": "bytes"
       };
+
+      const upstreamType = String(proxyRes.headers["content-type"] || "");
+      const isM3u8 = upstreamType.includes("mpegurl") || upstreamType.includes("vnd.apple.mpegurl") || targetUrl.toLowerCase().includes(".m3u8");
+
+      if (isM3u8 && statusCode >= 200 && statusCode < 300) {
+        let rawBody = "";
+        proxyRes.setEncoding("utf8");
+        proxyRes.on("data", (chunk) => {
+          rawBody += chunk;
+        });
+        proxyRes.on("end", () => {
+          const rewrittenLines = rawBody.split(/\r?\n/).map((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return line;
+
+            if (trimmed.startsWith("#")) {
+              return line.replace(/URI="([^"]+)"/g, (match, uri) => {
+                try {
+                  const abs = new URL(uri, targetUrl).href;
+                  const proxied = `/api/video-proxy?url=${encodeURIComponent(abs)}${customReferer ? `&referer=${encodeURIComponent(customReferer)}` : ""}`;
+                  return `URI="${proxied}"`;
+                } catch {
+                  return match;
+                }
+              });
+            }
+
+            try {
+              const abs = new URL(trimmed, targetUrl).href;
+              return `/api/video-proxy?url=${encodeURIComponent(abs)}${customReferer ? `&referer=${encodeURIComponent(customReferer)}` : ""}`;
+            } catch {
+              return line;
+            }
+          });
+
+          const rewrittenBody = rewrittenLines.join("\n");
+          headers["Content-Type"] = "application/vnd.apple.mpegurl";
+          headers["Content-Length"] = String(Buffer.byteLength(rewrittenBody, "utf8"));
+          headers["Cache-Control"] = "no-cache, no-store";
+          res.writeHead(statusCode, headers);
+          res.end(rewrittenBody);
+        });
+        return;
+      }
 
       if (proxyRes.headers["content-type"]) {
         headers["Content-Type"] = proxyRes.headers["content-type"];
@@ -691,13 +742,7 @@ function getYtDlpRunner(): { command: string; prefixArgs: string[] } {
 }
 
 function getFfmpegCommand(): string {
-  try {
-    const ffmpegStatic = require("ffmpeg-static");
-    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
-      return ffmpegStatic;
-    }
-  } catch {}
-
+  // 1. Check bundled/downloaded static binary in bin/
   const localBin = path.join(process.cwd(), "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
   if (fs.existsSync(localBin)) {
     try {
@@ -705,6 +750,19 @@ function getFfmpegCommand(): string {
     } catch {}
     return localBin;
   }
+
+  // 2. Check ffmpeg-static npm package
+  try {
+    const ffmpegStatic = require("ffmpeg-static");
+    if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
+      try {
+        fs.chmodSync(ffmpegStatic, 0o755);
+      } catch {}
+      return ffmpegStatic;
+    }
+  } catch {}
+
+  // 3. Fallback to system PATH ffmpeg
   return "ffmpeg";
 }
 
@@ -1828,7 +1886,25 @@ function handleVideoProxy(req: http.IncomingMessage, res: http.ServerResponse, p
     return;
   }
 
-  proxyRemoteMediaStream(targetUrl, req, res, "video/mp4");
+  let customReferer = (parsedUrl.query?.referer as string) || (req.headers["x-referer"] as string) || "";
+  try {
+    const pTarget = new URL(targetUrl);
+    if (!customReferer) {
+      if (pTarget.hostname.includes("birchbarkandbloom.space")) {
+        customReferer = "https://stellarconductornexus.com/";
+      } else if (
+        pTarget.hostname.includes("megacloud") ||
+        pTarget.hostname.includes("dokicloud") ||
+        pTarget.hostname.includes("rabbitstream") ||
+        pTarget.hostname.includes("vidcloud") ||
+        pTarget.hostname.includes("cinehd")
+      ) {
+        customReferer = `https://${pTarget.hostname}/`;
+      }
+    }
+  } catch {}
+
+  proxyRemoteMediaStream(targetUrl, req, res, "video/mp4", customReferer);
 }
 
 interface GdriveResolved {
@@ -1981,8 +2057,7 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
 
       // If Google Drive file has MKV container or EAC3/AC3 audio, remux on-the-fly to AAC stereo
       if (isEac3OrMkv) {
-        proxyReq.destroy();
-        console.log(`[GDrive Stream] Detected MKV / EAC3 audio container for ${fileId}. Transcoding audio on-the-fly to AAC stereo...`);
+        console.log(`[GDrive Stream] Detected MKV / EAC3 audio container for ${fileId}. Remuxing audio on-the-fly to AAC stereo via pipe:0...`);
 
         // Cache successful direct stream URL for future seeks
         gdriveResolvedCache.set(fileId!, {
@@ -1991,13 +2066,12 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
           expiresAt: Date.now() + 3 * 3600 * 1000
         });
 
-        const startTime = Math.max(0, parseFloat((parsedUrl.query?.t || parsedUrl.query?.start || 0) as string) || 0);
-
         res.writeHead(200, {
           "Content-Type": "video/mp4",
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
           "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
+          "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
           "Cache-Control": "no-cache, no-store",
           "Connection": "keep-alive"
         });
@@ -2005,15 +2079,7 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         const ffmpegArgs: string[] = [
           "-hide_banner",
           "-loglevel", "error",
-          "-headers", `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\nCookie: ${mergedCookies}\r\n`,
-        ];
-
-        if (startTime > 0) {
-          ffmpegArgs.push("-ss", String(startTime));
-        }
-
-        ffmpegArgs.push(
-          "-i", targetUrl,
+          "-i", "pipe:0",
           "-c:v", "copy",
           "-c:a", "aac",
           "-b:a", "192k",
@@ -2022,24 +2088,37 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
           "-movflags", "frag_keyframe+empty_moov+default_base_moof",
           "-f", "mp4",
           "pipe:1"
-        );
+        ];
 
         const ffmpegCmd = getFfmpegCommand();
-        const ff = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
+        const ff = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["pipe", "pipe", "pipe"] });
+
+        proxyRes.pipe(ff.stdin);
         ff.stdout.pipe(res);
 
+        ff.stderr.on("data", (chunk) => {
+          console.warn(`[GDrive Stream] ffmpeg stderr for ${fileId}:`, chunk.toString().slice(0, 200));
+        });
+
         ff.on("error", (err) => {
-          console.error(`[GDrive Stream] FFmpeg EAC3 transcode error for ${fileId}:`, err);
+          console.error(`[GDrive Stream] FFmpeg EAC3 transcode spawn error for ${fileId}:`, err.message);
+          try { proxyReq.destroy(); } catch {}
           if (!res.headersSent) {
             res.writeHead(500, { "Content-Type": "text/plain" });
             res.end("EAC3 audio transcode error");
+          } else {
+            res.end();
           }
         });
 
+        proxyRes.on("error", (err) => {
+          console.error(`[GDrive Stream] Upstream proxy error for ${fileId}:`, err.message);
+          try { ff.kill("SIGKILL"); } catch {}
+        });
+
         req.on("close", () => {
-          try {
-            ff.kill("SIGKILL");
-          } catch {}
+          try { ff.kill("SIGKILL"); } catch {}
+          try { proxyReq.destroy(); } catch {}
         });
 
         return;
@@ -2129,9 +2208,29 @@ app.prepare().then(() => {
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       const cookieHeader = getCookiesHeader();
+      const ffmpegCmd = getFfmpegCommand();
+      let ffmpegVersion = "unknown";
+      try {
+        const result = spawnSync(ffmpegCmd, ["-version"], { encoding: "utf8", timeout: 2000 });
+        if (result.stdout) {
+          ffmpegVersion = result.stdout.split("\n")[0].trim();
+        } else if (result.stderr) {
+          ffmpegVersion = `stderr: ${result.stderr.slice(0, 100)}`;
+        } else if (result.error) {
+          ffmpegVersion = `error: ${result.error.message}`;
+        }
+      } catch (e: any) {
+        ffmpegVersion = `exception: ${e.message}`;
+      }
       res.writeHead(200);
       res.end(JSON.stringify({
         status: "ok",
+        platform: process.platform,
+        ffmpeg: {
+          cmd: ffmpegCmd,
+          version: ffmpegVersion,
+          localBinExists: fs.existsSync(path.join(process.cwd(), "bin", process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"))
+        },
         activeEngines: {
           USE_YOUTUBEI,
           USE_YTDLP,
