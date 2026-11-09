@@ -235,7 +235,16 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           {formatTime(duration)}
         </span>
 
-        <span className="volume-icon" style={{ display: "inline-flex", alignItems: "center" }} title={`Volume: ${Math.round(volume * 100)}%`}>
+        <span
+          className="volume-icon"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            opacity: isHost ? 1.0 : 0.65,
+            cursor: isHost ? "pointer" : "not-allowed"
+          }}
+          title={isHost ? `Theatre Master Volume: ${Math.round(volume * 100)}%` : `Theatre Master Volume: ${Math.round(volume * 100)}% (Controlled by Host)`}
+        >
           <FiVolume2 />
         </span>
         <input
@@ -246,11 +255,18 @@ export const MovieControls: React.FC<MovieControlsProps> = ({
           max="1.5"
           step="0.01"
           value={volume}
-          onChange={(e) => onVolumeChange(Number(e.target.value))}
-          title={`Volume: ${Math.round(volume * 100)}% (Boost up to 150%)`}
-          aria-label="Volume (up to 150%)"
+          disabled={!isHost}
+          onChange={(e) => {
+            if (isHost) onVolumeChange(Number(e.target.value));
+          }}
+          style={{
+            cursor: isHost ? "pointer" : "not-allowed",
+            opacity: isHost ? 1.0 : 0.65
+          }}
+          title={isHost ? `Theatre Master Volume: ${Math.round(volume * 100)}% (Host controls volume for all players)` : `Theatre Master Volume: ${Math.round(volume * 100)}% (Host controls theatre volume)`}
+          aria-label={isHost ? "Theatre Volume (Host controls all players)" : "Theatre Volume (Host controlled)"}
         />
-        <span style={{ fontSize: "9px", color: volume > 1.0 ? "#38bdf8" : "#94a3b8", fontWeight: 700, minWidth: "28px" }}>
+        <span style={{ fontSize: "9px", color: volume > 1.0 ? "#38bdf8" : "#94a3b8", fontWeight: 700, minWidth: "28px" }} title={isHost ? "Host can boost up to 150%" : "Host controls theatre volume"}>
           {Math.round(volume * 100)}%
         </span>
 

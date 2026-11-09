@@ -28,7 +28,7 @@ import {
   UserData,
   VideoQuality
 } from "../types/cinema";
-import { DEFAULT_LIGHTING, DEFAULT_MOVIE } from "../lib/constants";
+import { CHARACTER_PRESETS, DEFAULT_LIGHTING, DEFAULT_MOVIE } from "../lib/constants";
 
 function CinemaApp() {
   const { showToast } = useToast();
@@ -66,6 +66,10 @@ function CinemaApp() {
   const [videoDuration, setVideoDuration] = useState<number>(0);
   const [videoVolume, setVideoVolume] = useState<number>(0.8);
 
+  const [isTheatreLoading, setIsTheatreLoading] = useState<boolean>(false);
+  const [loadStatus, setLoadStatus] = useState<string>("");
+  const [loadProgress, setLoadProgress] = useState<number>(0);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioContainerRef = useRef<HTMLDivElement>(null);
@@ -80,6 +84,20 @@ function CinemaApp() {
   const showToastRef = useRef(showToast);
   const lastHardSeekTimeRef = useRef<number>(0);
   const isPlayPendingRef = useRef<boolean>(false);
+  // Authoritative room playback intent (set only by explicit host actions / server state)
+  const desiredPlayingRef = useRef<boolean>(false);
+  const liveRef = useRef<{ time: number; at: number; playing: boolean }>({ time: 0, at: Date.now(), playing: false });
+  const activeMediaRef = useRef<{ url: string; wrapped: string }>({ url: "", wrapped: "" });
+  const lastApplyRef = useRef<{ url: string; at: number }>({ url: "", at: 0 });
+  const resumeCleanupRef = useRef<(() => void) | null>(null);
+  const lastVolumeRef = useRef<number>(-1);
+  const lastVolSendRef = useRef<number>(0);
+  const volTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTheatreLoadingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    isTheatreLoadingRef.current = isTheatreLoading;
+  }, [isTheatreLoading]);
 
   useEffect(() => {
     selfIdRef.current = selfId;
@@ -140,6 +158,10 @@ function CinemaApp() {
     if (!video.paused) return;
 
     isPlayPendingRef.current = true;
+    // Never let a never-settling play() promise block future play attempts
+    setTimeout(() => {
+      isPlayPendingRef.current = false;
+    }, 4000);
     const p = video.play();
     if (p !== undefined) {
       p.then(() => {
@@ -170,11 +192,62 @@ function CinemaApp() {
     }
   }, []);
 
+  // Room volume is controlled by the host only; every client mirrors it
+  const applyVolumeValue = useCallback((vol: number, onlyIfChanged = false) => {
+    const clamped = Math.max(0, Math.min(1.5, vol));
+    if (onlyIfChanged && Math.abs(lastVolumeRef.current - clamped) < 0.001) return;
+    lastVolumeRef.current = clamped;
+    setVideoVolume(clamped);
+    const v = videoRef.current;
+    if (v) {
+      try {
+        v.volume = Math.min(1.0, clamped);
+      } catch {}
+    }
+    if (engineRef.current) {
+      try {
+        engineRef.current.setVolume(clamped);
+      } catch {}
+    }
+  }, []);
+
+  // Theatre entry loader, phase 1: service worker + cache every asset needed to render the room
+  const prepareTheatreAssets = useCallback(async (room: RoomDetail, roomUsers: UserData[]) => {
+    setLoadStatus("Preparing local cache...");
+    setLoadProgress(15);
+    await Promise.race([mediaPreloader.init(), new Promise((r) => setTimeout(r, 2000))]);
+    mediaPreloader.purgeOtherRooms(room.id);
+
+    const required = ["/assets/theater/cinema_chair.glb", "/assets/theater/tube_light.glb"];
+    (roomUsers || []).forEach((u) => {
+      const preset = CHARACTER_PRESETS[(u as any).characterType as string];
+      if (preset && preset.url && !required.includes(preset.url)) required.push(preset.url);
+    });
+    const rest = Object.values(CHARACTER_PRESETS)
+      .map((p) => p.url)
+      .filter((u) => !!u && !required.includes(u));
+
+    setLoadStatus("Caching theatre & characters...");
+    await Promise.race([
+      mediaPreloader.warmAssets(required, (done, total) => {
+        setLoadProgress(15 + Math.round((done / Math.max(1, total)) * 40));
+      }),
+      new Promise((r) => setTimeout(r, 2500))
+    ]);
+    // Remaining character presets keep caching in the background so avatars render instantly
+    mediaPreloader.warmAssets(rest);
+  }, []);
+
   // Universal Media Loader: maps all videos directly onto the curved 3D cinema screen
-  const applyMediaSource = useCallback((mediaUrl: string, selectedQuality?: VideoQuality, resumeTime?: number, autoResume?: boolean) => {
+  const applyMediaSource = useCallback((mediaUrl: string, selectedQuality?: VideoQuality, resumeTime?: number, autoResume?: boolean, force?: boolean) => {
     const video = videoRef.current;
     const engine = engineRef.current;
     if (!video || !mediaUrl) return;
+
+    // The same movie-loaded event arrives over two channels; never load the same source twice
+    const nowTs = Date.now();
+    if (!force && lastApplyRef.current.url === mediaUrl && nowTs - lastApplyRef.current.at < 6000) return;
+    lastApplyRef.current = { url: mediaUrl, at: nowTs };
 
     let targetUrl = mediaUrl.trim();
     const currentQ = selectedQuality || quality || "1080p";
@@ -231,8 +304,23 @@ function CinemaApp() {
       video.removeAttribute("crossorigin");
     }
 
-    // Preload video chunks in browser cache / storage in background
-    mediaPreloader.preload(targetUrl);
+    // Per-room chunk cache (service worker). HLS streams buffer their own segments.
+    if (!isHls) {
+      targetUrl = mediaPreloader.wrap(targetUrl, currentRoomRef.current?.id || null);
+      if (targetUrl.includes("mq_room=")) {
+        mediaPreloader.startBackgroundCache(targetUrl, () => {
+          const v = videoRef.current;
+          return v && v.duration && isFinite(v.duration) ? v.currentTime / v.duration : 0;
+        });
+      } else {
+        mediaPreloader.cancel();
+      }
+    }
+    activeMediaRef.current = { url: mediaUrl, wrapped: targetUrl };
+    if (resumeCleanupRef.current) {
+      resumeCleanupRef.current();
+      resumeCleanupRef.current = null;
+    }
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -247,8 +335,11 @@ function CinemaApp() {
       if (resumed) return;
       resumed = true;
       try {
-        if (targetResumeTime > 0 && isFinite(targetResumeTime)) {
-          video.currentTime = targetResumeTime;
+        // Resume at the LIVE room position (not the position when the join message was sent)
+        const live = liveRef.current;
+        const resumeT = shouldPlay && live.playing ? live.time + (Date.now() - live.at) / 1000 : targetResumeTime;
+        if (resumeT > 0 && isFinite(resumeT)) {
+          video.currentTime = resumeT;
           if (shouldPlay) {
             const onSeeked = () => {
               video.removeEventListener("seeked", onSeeked);
@@ -266,12 +357,13 @@ function CinemaApp() {
       } catch {}
     };
 
-    if (video.readyState >= 1) {
-      onResume();
-    } else {
-      video.addEventListener("loadedmetadata", onResume, { once: true });
-      video.addEventListener("canplay", onResume, { once: true });
-    }
+    // The source is always (re)loaded below, so always wait for the NEW media's metadata
+    video.addEventListener("loadedmetadata", onResume, { once: true });
+    video.addEventListener("canplay", onResume, { once: true });
+    resumeCleanupRef.current = () => {
+      video.removeEventListener("loadedmetadata", onResume);
+      video.removeEventListener("canplay", onResume);
+    };
 
     if (isHls || targetUrl.includes(".m3u8")) {
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -411,6 +503,20 @@ function CinemaApp() {
       setUsers(msg.room.users || []);
       setInRoom(true);
 
+      // Make room/self available to handlers immediately and show the entry loader
+      currentRoomRef.current = msg.room;
+      selfIdRef.current = msg.userId;
+      setIsTheatreLoading(true);
+      setLoadProgress(2);
+      setLoadStatus("Entering theatre...");
+      liveRef.current = {
+        time: Math.max(0, msg.movie?.time || 0),
+        at: Date.now(),
+        playing: !!msg.movie?.playing
+      };
+      desiredPlayingRef.current = !!msg.movie?.playing;
+      lastApplyRef.current = { url: "", at: 0 };
+
       // Connect to itty-sockets room channel for instant, delay-free video playback synchronization
       const isCurrentHost = msg.room.hostId === msg.userId;
       ittySync.connectToRoom(msg.room.id, isCurrentHost ? "Host" : "Viewer");
@@ -431,7 +537,12 @@ function CinemaApp() {
       showToastRef.current(`Welcome to ${msg.room.name}!`);
 
       // Initialize Three.js Cinema Engine
-      setTimeout(() => {
+      setTimeout(async () => {
+        // Cache theatre + character assets first so the 3D engine renders from the local cache
+        try {
+          await prepareTheatreAssets(msg.room, msg.room.users || []);
+        } catch {}
+
         if (containerRef.current && videoRef.current) {
           if (engineRef.current) {
             engineRef.current.destroy();
@@ -490,12 +601,64 @@ function CinemaApp() {
             }
           }
 
+          // Host-controlled room volume applies to everyone, including late joiners
+          applyVolumeValue(typeof msg.movie?.volume === "number" ? msg.movie.volume : 0.8);
+
           // Set movie video source with exact current playback time & auto-resume state
           if (msg.movie && msg.movie.url) {
             const currentPlaybackTime = Math.max(0, msg.movie.time || 0);
             const shouldAutoPlay = !!msg.movie.playing;
-            applyMediaSource(msg.movie.url, quality, currentPlaybackTime, shouldAutoPlay);
+            setLoadStatus("Synchronizing cinema stream...");
+            setLoadProgress(65);
+            applyMediaSource(msg.movie.url, quality, currentPlaybackTime, shouldAutoPlay, true);
+
+            // Loader phase 2: wait for video readiness with max 2.5s timeout so joining is snappy
+            setLoadStatus("Entering theatre...");
+            setLoadProgress(80);
+            await new Promise<void>((resolve) => {
+              const v = videoRef.current;
+              if (!v || v.readyState >= 2) {
+                resolve();
+                return;
+              }
+              const onReady = () => {
+                cleanup();
+                resolve();
+              };
+              const timer = setTimeout(() => {
+                cleanup();
+                resolve();
+              }, 2500);
+              const cleanup = () => {
+                clearTimeout(timer);
+                if (v) {
+                  v.removeEventListener("loadeddata", onReady);
+                  v.removeEventListener("canplay", onReady);
+                  v.removeEventListener("error", onReady);
+                }
+              };
+              v.addEventListener("loadeddata", onReady, { once: true });
+              v.addEventListener("canplay", onReady, { once: true });
+              v.addEventListener("error", onReady, { once: true });
+            });
+
+            // Ensure video starts playing at the current live room position immediately
+            const v = videoRef.current;
+            if (v && shouldAutoPlay) {
+              const live = liveRef.current;
+              const liveT = live.playing ? live.time + (Date.now() - live.at) / 1000 : currentPlaybackTime;
+              if (v.readyState >= 1 && Math.abs(v.currentTime - liveT) > 1.2) {
+                try {
+                  v.currentTime = liveT;
+                } catch {}
+              }
+              playVideoSafe(v);
+            }
           }
+          setLoadProgress(100);
+          setIsTheatreLoading(false);
+        } else {
+          setIsTheatreLoading(false);
         }
       }, 50);
     });
@@ -552,6 +715,11 @@ function CinemaApp() {
 
     socketClient.on("movie-loaded", (msg: { movie: MovieState }) => {
       setMovie(msg.movie);
+      liveRef.current = { time: Math.max(0, msg.movie.time || 0), at: Date.now(), playing: !!msg.movie.playing };
+      desiredPlayingRef.current = !!msg.movie.playing;
+      // The host already loaded this source locally; only viewers (re)load it
+      if (currentRoomRef.current?.hostId === selfIdRef.current) return;
+      if (typeof msg.movie.volume === "number") applyVolumeValue(msg.movie.volume, true);
       const isAutoPlay = !!msg.movie.playing;
       const initialTime = Math.max(0, msg.movie.time || 0);
       applyMediaSource(msg.movie.url, quality, initialTime, isAutoPlay);
@@ -560,12 +728,17 @@ function CinemaApp() {
 
     socketClient.on("movie-state", (msg: { state: MovieState; action?: string; by?: string }) => {
       setMovie(msg.state);
+      liveRef.current = { time: msg.state.time, at: Date.now(), playing: !!msg.state.playing };
+      desiredPlayingRef.current = !!msg.state.playing;
+      // The host's player is the source of truth and is never driven by incoming state
+      if (currentRoomRef.current?.hostId === selfIdRef.current) return;
       const engine = engineRef.current;
       const video = videoRef.current;
       if (!video) return;
 
       const now = Date.now();
-      const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
+      const rawElapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
+      const elapsed = rawElapsed > 0 && rawElapsed < 2 ? rawElapsed : 0; // ignore device clock skew
       const targetTime = Math.max(0, msg.state.time + elapsed);
 
       // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 2.0 seconds (NEVER on volume)
@@ -617,9 +790,18 @@ function CinemaApp() {
       if (currentRoomRef.current?.hostId === selfIdRef.current) return;
 
       const now = Date.now();
-      const latency = (now - msg.serverTime) / 1000;
+      const rawLatency = (now - msg.serverTime) / 1000;
+      const latency = rawLatency > 0 && rawLatency < 2 ? rawLatency : 0; // ignore device clock skew
       const targetTime = Math.max(0, msg.time + latency);
       const drift = targetTime - video.currentTime;
+
+      // Server is authoritative for play/pause + host-controlled volume
+      liveRef.current = { time: targetTime, at: now, playing: !!msg.playing };
+      desiredPlayingRef.current = !!msg.playing;
+      if (typeof (msg as any).volume === "number") applyVolumeValue((msg as any).volume, true);
+
+      // Never fight the loader while the theatre is still preparing this client's player
+      if (isTheatreLoadingRef.current) return;
 
       // 1. Play / Pause state synchronization
       if (msg.playing && video.paused) {
@@ -724,6 +906,10 @@ function CinemaApp() {
     unsubs.push(
       ittySync.on("movie-loaded", (msg: { movie: MovieState }) => {
         setMovie(msg.movie);
+        liveRef.current = { time: Math.max(0, msg.movie.time || 0), at: Date.now(), playing: !!msg.movie.playing };
+        desiredPlayingRef.current = !!msg.movie.playing;
+        if (currentRoomRef.current?.hostId === selfIdRef.current) return;
+        if (typeof msg.movie.volume === "number") applyVolumeValue(msg.movie.volume, true);
         const isAutoPlay = !!msg.movie.playing;
         const initialTime = Math.max(0, msg.movie.time || 0);
         applyMediaSource(msg.movie.url, quality, initialTime, isAutoPlay);
@@ -734,12 +920,16 @@ function CinemaApp() {
     unsubs.push(
       ittySync.on("movie-state", (msg: { state: MovieState; action?: string; by?: string }) => {
         setMovie(msg.state);
+        liveRef.current = { time: msg.state.time, at: Date.now(), playing: !!msg.state.playing };
+        desiredPlayingRef.current = !!msg.state.playing;
+        if (currentRoomRef.current?.hostId === selfIdRef.current) return;
         const engine = engineRef.current;
         const video = videoRef.current;
         if (!video) return;
 
         const now = Date.now();
-        const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
+        const rawElapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
+        const elapsed = rawElapsed > 0 && rawElapsed < 2 ? rawElapsed : 0; // ignore device clock skew
         const targetTime = Math.max(0, msg.state.time + elapsed);
 
         if (msg.action === "seek" || (msg.action !== "volume" && Math.abs(video.currentTime - targetTime) > 2.0)) {
@@ -791,15 +981,17 @@ function CinemaApp() {
         if (currentRoomRef.current?.hostId === selfIdRef.current) return;
 
         const now = Date.now();
-        const latency = (now - msg.serverTime) / 1000;
+        const rawLatency = (now - msg.serverTime) / 1000;
+        const latency = rawLatency > 0 && rawLatency < 2 ? rawLatency : 0; // ignore device clock skew
         const targetTime = Math.max(0, msg.time + latency);
         const drift = targetTime - video.currentTime;
 
-        if (msg.playing && video.paused) {
+        // The host's raw player state is only a clock hint. Play/pause changes come from explicit
+        // host actions, so a transient host buffer/pause can never pause the whole theatre.
+        if (isTheatreLoadingRef.current || !desiredPlayingRef.current) return;
+        liveRef.current = { time: targetTime, at: now, playing: true };
+        if (video.paused) {
           playVideoSafe(video);
-          return;
-        } else if (!msg.playing && !video.paused) {
-          video.pause();
           return;
         }
 
@@ -837,6 +1029,68 @@ function CinemaApp() {
     };
   }, [inRoom, currentRoom, quality, playVideoSafe]);
 
+  // Playback watchdog: whenever the room is playing, keep the player playing and recover stalled streams.
+  useEffect(() => {
+    if (!inRoom) return;
+    let lastTime = -1;
+    let stuckSince = 0;
+    let nudged = false;
+    let lastReload = 0;
+
+    const iv = setInterval(() => {
+      const v = videoRef.current;
+      if (!v || !v.src || isTheatreLoadingRef.current) return;
+
+      if (!desiredPlayingRef.current) {
+        lastTime = -1;
+        stuckSince = 0;
+        nudged = false;
+        return;
+      }
+      if (v.ended) return;
+
+      if (v.paused) {
+        lastTime = -1;
+        stuckSince = 0;
+        nudged = false;
+        if (!v.seeking && v.readyState >= 2) playVideoSafe(v);
+        return;
+      }
+
+      if (Math.abs(v.currentTime - lastTime) > 0.01) {
+        lastTime = v.currentTime;
+        stuckSince = 0;
+        nudged = false;
+        return;
+      }
+
+      const now = Date.now();
+      if (!stuckSince) {
+        stuckSince = now;
+        return;
+      }
+      const stuckFor = now - stuckSince;
+      if (stuckFor > 4000 && !nudged) {
+        nudged = true;
+        try {
+          v.currentTime = v.currentTime + 0.05;
+        } catch {}
+        v.play().catch(() => {});
+      } else if (stuckFor > 12000 && now - lastReload > 15000 && activeMediaRef.current.url) {
+        lastReload = now;
+        stuckSince = 0;
+        nudged = false;
+        if (currentRoomRef.current?.hostId === selfIdRef.current) {
+          liveRef.current = { time: v.currentTime, at: now, playing: true };
+        }
+        showToastRef.current("Re-syncing stream...");
+        applyMediaSource(activeMediaRef.current.url, quality, undefined, true, true);
+      }
+    }, 1000);
+
+    return () => clearInterval(iv);
+  }, [inRoom, applyMediaSource, playVideoSafe, quality]);
+
   // Host Clock Authority: The Host's player is the master clock for the room.
   // Periodically send lightweight playback heartbeats to anchor room time with zero drift.
   useEffect(() => {
@@ -847,16 +1101,18 @@ function CinemaApp() {
     const timer = setInterval(() => {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return;
+      // Do not anchor the room clock while this player is still loading / seeking to its start position
+      if (isTheatreLoadingRef.current || video.seeking) return;
 
       // 1. Instant zero-latency edge broadcast via itty-sockets
-      ittySync.broadcastMovieSync(video.currentTime, !video.paused);
+      ittySync.broadcastMovieSync(video.currentTime, desiredPlayingRef.current);
 
       // 2. Also keep Render WebSocket backend synchronized
       socketClient.send({
         type: "playback",
         action: "sync",
         time: video.currentTime,
-        playing: !video.paused
+        playing: desiredPlayingRef.current
       });
     }, 1200);
 
@@ -897,6 +1153,12 @@ function CinemaApp() {
   const handleLeaveTheatre = () => {
     ittySync.disconnect();
     mediaPreloader.cancel();
+    if (currentRoomRef.current) {
+      // The cached movie belongs to this room session only
+      mediaPreloader.clearRoom(currentRoomRef.current.id);
+    }
+    desiredPlayingRef.current = false;
+    setIsTheatreLoading(false);
     if (voiceManagerRef.current) {
       voiceManagerRef.current.leaveVoice();
     }
@@ -991,6 +1253,9 @@ function CinemaApp() {
     };
     setMovie(updatedState);
 
+    desiredPlayingRef.current = nextState;
+    liveRef.current = { time: curTime, at: Date.now(), playing: nextState };
+
     // Immediate local playback update for the host (zero latency)
     if (nextState) {
       if (videoRef.current) playVideoSafe(videoRef.current);
@@ -1023,6 +1288,7 @@ function CinemaApp() {
       }
     }
     setVideoTime(targetTime);
+    liveRef.current = { time: targetTime, at: Date.now(), playing: desiredPlayingRef.current };
 
     const updatedState: MovieState = {
       ...movie,
@@ -1043,19 +1309,36 @@ function CinemaApp() {
     });
   };
 
+  // Only the host controls the volume, and it applies to the entire theatre
   const handleVolumeChange = (vol: number) => {
+    if (!isHost) return;
     const clamped = Math.max(0, Math.min(1.5, vol));
-    setVideoVolume(clamped);
-
+    applyVolumeValue(clamped);
     if (engineRef.current) {
       engineRef.current.spatialAudio.resume();
-      engineRef.current.setVolume(clamped);
     }
 
-    if (videoRef.current) {
-      try {
-        videoRef.current.volume = Math.min(1.0, clamped);
-      } catch {}
+    const sendVolume = () => {
+      lastVolSendRef.current = Date.now();
+      const video = videoRef.current;
+      const updatedState: MovieState = {
+        ...movie,
+        volume: clamped,
+        time: video ? video.currentTime || 0 : movie.time,
+        playing: desiredPlayingRef.current,
+        serverTime: Date.now()
+      };
+      // 1. Direct edge broadcast to viewers, 2. keep the server (late joiners) in sync
+      ittySync.broadcastMovieState(updatedState, "volume", "Host");
+      socketClient.send({ type: "playback", action: "volume", volume: clamped });
+    };
+
+    if (Date.now() - lastVolSendRef.current > 100) {
+      if (volTimerRef.current) clearTimeout(volTimerRef.current);
+      sendVolume();
+    } else {
+      if (volTimerRef.current) clearTimeout(volTimerRef.current);
+      volTimerRef.current = setTimeout(sendVolume, 120);
     }
   };
 
@@ -1067,14 +1350,15 @@ function CinemaApp() {
       title: title || parsed.title || "Cinema Movie",
       playing: true,
       time: 0,
-      volume: 0.8,
+      volume: videoVolume,
       updatedAt: Date.now()
     };
     setMovie(updatedMovie);
 
-    // Preload video chunks in browser cache / storage immediately
-    mediaPreloader.preload(parsed.streamUrl);
-    applyMediaSource(parsed.streamUrl, quality, 0, true);
+    desiredPlayingRef.current = true;
+    liveRef.current = { time: 0, at: Date.now(), playing: true };
+    // Loads the movie locally; chunks are cached per room session through the service worker
+    applyMediaSource(parsed.streamUrl, quality, 0, true, true);
 
     // 1. Direct zero-latency movie load via itty-sockets
     ittySync.broadcastMovieLoaded(updatedMovie);
@@ -1357,6 +1641,49 @@ function CinemaApp() {
             onLightingChange={handleLightingChange}
           />
         </>
+      )}
+
+      {/* Theatre entry loader: assets + movie are cached and buffered before the audience enters */}
+      {isTheatreLoading && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9000,
+            background: "radial-gradient(circle at 50% 40%, #121826 0%, #05060a 70%)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "18px",
+            color: "#e2e8f0"
+          }}
+        >
+          <div style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "0.18em" }}>MOVIQ</div>
+          <div style={{ fontSize: "13px", color: "#94a3b8" }}>{loadStatus || "Loading..."}</div>
+          <div
+            style={{
+              width: "min(320px, 70vw)",
+              height: "6px",
+              borderRadius: "999px",
+              background: "rgba(148,163,184,0.2)",
+              overflow: "hidden"
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.max(2, Math.min(100, loadProgress))}%`,
+                height: "100%",
+                borderRadius: "999px",
+                background: "linear-gradient(90deg, #38bdf8, #818cf8)",
+                transition: "width 0.25s ease"
+              }}
+            />
+          </div>
+          <div style={{ fontSize: "11px", color: "#64748b" }}>{Math.round(loadProgress)}%</div>
+        </div>
       )}
 
       {/* Browser Autoplay Permission Gate */}

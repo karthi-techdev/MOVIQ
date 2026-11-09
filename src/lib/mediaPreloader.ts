@@ -1,124 +1,220 @@
 "use client";
 
 /**
- * MOVIQ High-Speed Browser Media Chunk Preloader
- * Proactively caches video chunks in the browser's CacheStorage and Memory Buffer
- * so playback starts instantly with zero buffering lag on individual viewers.
+ * MOVIQ browser media cache manager.
+ * Works with /sw.js: movie streams are cached as 2 MB chunks in CacheStorage (one cache per room session),
+ * and static cinema assets (characters, theatre models) are cached for instant rendering.
  */
 
-const CACHE_NAME = "moviq-room-media-cache";
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per preloaded chunk
-const MAX_PRELOAD_CHUNKS = 4; // Preload up to 20 MB in advance
+const CHUNK = 2 * 1024 * 1024; // must match public/sw.js
+const AHEAD_CHUNKS = 30; // keep ~60 MB cached ahead of the playhead
+const MEDIA_RE = /^\/(api\/(video-proxy|gdrive-stream)|assets\/movies\/)/;
+const ROOM_CACHE_PREFIX = "moviq-room-";
 
 export class MediaPreloader {
-  private activeUrl: string | null = null;
-  private abortController: AbortController | null = null;
-  private preloadedBytes: number = 0;
-  private isPreloading: boolean = false;
+  private swInit: Promise<boolean> | null = null;
+  private swReady = false;
+  private token = 0;
+  private abort: AbortController | null = null;
 
-  constructor() {}
-
-  public async preload(mediaUrl: string): Promise<void> {
-    if (!mediaUrl || mediaUrl.includes(".m3u8")) {
-      // HLS streams handle their own segment buffering
-      return;
-    }
-
-    if (this.activeUrl === mediaUrl && this.isPreloading) {
-      return;
-    }
-
-    // Cancel any previous preload job
-    this.cancel();
-
-    this.activeUrl = mediaUrl;
-    this.abortController = new AbortController();
-    this.isPreloading = true;
-    this.preloadedBytes = 0;
-
-    const signal = this.abortController.signal;
-
-    try {
-      let cache: Cache | null = null;
-      if (typeof window !== "undefined" && "caches" in window) {
-        try {
-          cache = await caches.open(CACHE_NAME);
-        } catch {
-          cache = null;
-        }
+  /** Register the service worker (needs HTTPS or localhost). Resolves true when it controls the page. */
+  public init(): Promise<boolean> {
+    if (this.swInit) return this.swInit;
+    this.swInit = (async () => {
+      if (typeof window === "undefined" || !("serviceWorker" in navigator) || !window.isSecureContext) {
+        return false;
       }
-
-      // Preload initial sequential chunks in the background
-      for (let i = 0; i < MAX_PRELOAD_CHUNKS; i++) {
-        if (signal.aborted) break;
-
-        const start = i * CHUNK_SIZE;
-        const end = start + CHUNK_SIZE - 1;
-
-        try {
-          const chunkReq = new Request(mediaUrl, {
-            headers: {
-              Range: `bytes=${start}-${end}`,
-              "X-Moviq-Preload": "1"
-            },
-            signal
+      try {
+        await navigator.serviceWorker.register("/sw.js");
+        await navigator.serviceWorker.ready;
+        if (!navigator.serviceWorker.controller) {
+          await new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, 3000);
+            navigator.serviceWorker.addEventListener(
+              "controllerchange",
+              () => {
+                clearTimeout(t);
+                resolve();
+              },
+              { once: true }
+            );
           });
+        }
+        this.swReady = !!navigator.serviceWorker.controller;
+      } catch {
+        this.swReady = false;
+      }
+      return this.swReady;
+    })();
+    return this.swInit;
+  }
 
-          // Check if already in browser CacheStorage
-          if (cache) {
-            const cachedRes = await cache.match(chunkReq);
-            if (cachedRes) {
-              this.preloadedBytes += CHUNK_SIZE;
-              continue;
-            }
-          }
+  public isReady(): boolean {
+    return this.swReady;
+  }
 
-          const res = await fetch(chunkReq);
-          if (res.ok || res.status === 206) {
-            this.preloadedBytes += CHUNK_SIZE;
-            if (cache) {
-              try {
-                await cache.put(chunkReq, res.clone());
-              } catch {}
-            }
-            // Consume the body stream to ensure browser disk/memory cache commit
-            await res.arrayBuffer();
-          } else {
-            // Server might not support Range or returned error; stop preloading
-            break;
-          }
+  /** Tag a movie stream URL with the room session so the service worker caches it per room. */
+  public wrap(mediaUrl: string, roomId?: string | null): string {
+    if (!this.swReady || !roomId || typeof window === "undefined") return mediaUrl;
+    try {
+      const u = new URL(mediaUrl, window.location.origin);
+      if (u.origin !== window.location.origin || !MEDIA_RE.test(u.pathname)) return mediaUrl;
+      u.searchParams.set("mq_room", roomId.toLowerCase());
+      return u.pathname + u.search;
+    } catch {
+      return mediaUrl;
+    }
+  }
+
+  /** Download static assets (characters, theatre models) so they land in the browser cache. */
+  public async warmAssets(urls: string[], onProgress?: (done: number, total: number) => void): Promise<void> {
+    const list = Array.from(new Set(urls.filter(Boolean)));
+    let done = 0;
+    const total = list.length;
+    onProgress?.(0, total);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < list.length) {
+        const url = list[cursor++];
+        try {
+          const res = await fetch(url);
+          if (res.ok) await res.arrayBuffer();
+        } catch {
+          // best effort
+        }
+        done++;
+        onProgress?.(done, total);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  }
+
+  private async prefetchChunk(wrappedUrl: string, idx: number, signal?: AbortSignal): Promise<number> {
+    const start = idx * CHUNK;
+    const timeoutCtrl = new AbortController();
+    const timer = setTimeout(() => timeoutCtrl.abort(), 7000);
+    try {
+      const res = await fetch(wrappedUrl, {
+        headers: { Range: `bytes=${start}-${start + CHUNK - 1}`, "X-Moviq-Prefetch": "1" },
+        signal: signal || timeoutCtrl.signal
+      });
+      clearTimeout(timer);
+      return parseInt(res.headers.get("X-Moviq-Total") || "0", 10) || 0;
+    } catch {
+      clearTimeout(timer);
+      return 0;
+    }
+  }
+
+  /** Make sure the chunks needed to start playback (head, tail index, chunks at the start position) are cached. */
+  public async primeStart(wrappedUrl: string, startFraction: number): Promise<number> {
+    if (!this.swReady || !wrappedUrl.includes("mq_room=")) return 0;
+    try {
+      const total = await this.prefetchChunk(wrappedUrl, 0);
+      if (!total) return 0;
+      const n = Math.ceil(total / CHUNK);
+      const cur = Math.min(n - 1, Math.max(0, Math.floor(Math.max(0, Math.min(1, startFraction)) * n)));
+      const wanted = new Set<number>([0, n - 1, cur, Math.min(n - 1, cur + 1), Math.min(n - 1, cur + 2)]);
+      await Promise.all([...wanted].map((i) => this.prefetchChunk(wrappedUrl, i).catch(() => 0)));
+      return total;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Keep caching chunks ahead of the playhead in the background (also fills after seeks). */
+  public async startBackgroundCache(
+    wrappedUrl: string,
+    getFraction: () => number,
+    onProgress?: (cachedRatio: number) => void
+  ): Promise<void> {
+    this.cancel();
+    if (!this.swReady || !wrappedUrl.includes("mq_room=")) return;
+
+    const myToken = ++this.token;
+    const ctrl = new AbortController();
+    this.abort = ctrl;
+
+    let total = 0;
+    try {
+      total = await this.prefetchChunk(wrappedUrl, 0, ctrl.signal);
+    } catch {
+      return;
+    }
+    if (!total) return;
+
+    const n = Math.ceil(total / CHUNK);
+    const cached = new Set<number>([0]);
+    const active = new Set<number>();
+
+    const nextIndex = (): number => {
+      const cur = Math.min(n - 1, Math.max(0, Math.floor(getFraction() * n)));
+      for (let i = cur; i < Math.min(n, cur + AHEAD_CHUNKS); i++) {
+        if (!cached.has(i) && !active.has(i)) return i;
+      }
+      return -1;
+    };
+
+    const worker = async () => {
+      while (myToken === this.token && !ctrl.signal.aborted) {
+        const idx = nextIndex();
+        if (idx < 0) {
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
+        active.add(idx);
+        try {
+          await this.prefetchChunk(wrappedUrl, idx, ctrl.signal);
+          cached.add(idx);
+          onProgress?.(cached.size / n);
         } catch (err: any) {
-          if (err.name === "AbortError") break;
-          // Non-fatal preload error (e.g. CORS or network limit)
-          break;
+          if (err && err.name === "AbortError") return;
+          await new Promise((r) => setTimeout(r, 1500));
+        } finally {
+          active.delete(idx);
         }
       }
-    } catch {
-      // Preloading is best-effort optimization; ignore non-fatal errors
-    } finally {
-      this.isPreloading = false;
-    }
+    };
+
+    await Promise.all([worker(), worker()]);
   }
 
   public cancel(): void {
-    if (this.abortController) {
+    this.token++;
+    if (this.abort) {
       try {
-        this.abortController.abort();
+        this.abort.abort();
       } catch {}
-      this.abortController = null;
+      this.abort = null;
     }
-    this.isPreloading = false;
   }
 
-  public async clearCache(): Promise<void> {
+  /** Remove the cached movie data of a room session. */
+  public async clearRoom(roomId: string): Promise<void> {
     this.cancel();
-    if (typeof window !== "undefined" && "caches" in window) {
-      try {
-        await caches.delete(CACHE_NAME);
-      } catch {}
-    }
+    const id = String(roomId || "").toLowerCase();
+    if (!id) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: "CLEAR_ROOM", roomId: id });
+      }
+      if (typeof window !== "undefined" && "caches" in window) {
+        await caches.delete(ROOM_CACHE_PREFIX + id);
+      }
+    } catch {}
+  }
+
+  /** Drop caches left over from other room sessions. */
+  public purgeOtherRooms(keepRoomId: string): void {
+    try {
+      if (typeof navigator !== "undefined" && navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "CLEAR_OTHER_ROOMS",
+          keep: String(keepRoomId || "").toLowerCase()
+        });
+      }
+    } catch {}
   }
 }
 
 export const mediaPreloader = new MediaPreloader();
-

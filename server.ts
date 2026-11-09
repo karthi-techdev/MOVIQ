@@ -253,11 +253,14 @@ function joinRoom(client: ClientSession, room: RoomSession, username: string, pr
   client.avatarColor = AVATAR_COLORS[client.colorIndex];
   room.users.set(client.id, client);
 
-  // Host Authority Restoration:
-  // If this client holds the hostSecret OR matches the creatorUsername:
-  const isAuthorizedHost =
+  // Host Authority:
+  // A client can ONLY reclaim or become host if NO active host is currently present in the room!
+  // This strictly protects an active host from being demoted when a viewer joins from the same browser/session.
+  const activeHostPresent = !!room.hostId && room.hostId !== client.id && room.users.has(room.hostId);
+  const isAuthorizedHost = !activeHostPresent && (
     (providedHostSecret && room.hostSecret && providedHostSecret === room.hostSecret) ||
-    (room.creatorUsername && client.username.toLowerCase() === room.creatorUsername.toLowerCase());
+    (room.creatorUsername && client.username.toLowerCase() === room.creatorUsername.toLowerCase())
+  );
 
   if (isAuthorizedHost) {
     if (room.hostGraceTimer) {
@@ -1576,13 +1579,12 @@ function handleMessage(client: ClientSession, raw: any) {
       switch (action) {
         case "sync":
         case "heartbeat":
+          // Heartbeat only anchors the clock. Play/pause state changes ONLY via explicit host play/pause actions,
+          // so a transient local pause (buffering, loading, autoplay policy) can never pause the whole theatre.
           if (typeof message.time === "number" && isFinite(message.time)) {
             movie.time = Math.max(0, message.time);
+            movie.updatedAt = now;
           }
-          if (typeof message.playing === "boolean") {
-            movie.playing = message.playing;
-          }
-          movie.updatedAt = now;
           return;
         case "play":
           movie.playing = true;
@@ -1596,7 +1598,10 @@ function handleMessage(client: ClientSession, raw: any) {
           movie.time = Math.max(0, Number(message.time) || 0);
           break;
         case "volume":
-          movie.volume = Math.min(1.5, Math.max(0, Number(message.volume) || 0.8));
+          {
+            const v = Number(message.volume);
+            movie.volume = isFinite(v) ? Math.min(1.5, Math.max(0, v)) : (movie.volume ?? 0.8);
+          }
           break;
       }
       if (action !== "volume") {
@@ -2392,6 +2397,20 @@ app.prepare().then(() => {
       }));
       return;
     }
+    if (parsedUrl.pathname === "/sw.js") {
+      const swPath = path.join(process.cwd(), "public", "sw.js");
+      if (fs.existsSync(swPath)) {
+        res.writeHead(200, {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Service-Worker-Allowed": "/",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0"
+        });
+        fs.createReadStream(swPath).pipe(res);
+        return;
+      }
+    }
     if (parsedUrl.pathname === "/api/video-proxy") {
       handleVideoProxy(req, res, parsedUrl);
       return;
@@ -2491,6 +2510,7 @@ app.prepare().then(() => {
           type: "movie-sync",
           time: curTime,
           playing: room.movie.playing,
+          volume: room.movie.volume,
           serverTime: now
         });
       }
