@@ -1877,10 +1877,13 @@ function startGdriveTranscodeJob(fileId: string, rawUrl: string, cookieHeader = 
   ffmpegArgs.push("-headers", headers);
   ffmpegArgs.push(
     "-i", rawUrl,
+    "-map", "0:v:0",
+    "-map", "0:a:0",
     "-c:v", "copy",
     "-c:a", "aac",
     "-b:a", "192k",
     "-ac", "2",
+    "-threads", "2",
     "-movflags", "frag_keyframe+empty_moov+default_base_moof",
     "-f", "mp4",
     tempPath
@@ -2252,14 +2255,16 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
           if (fs.existsSync(tempPath)) {
             try {
               const s = fs.statSync(tempPath);
-              if (s.size > 256 * 1024 || attempts >= 20) {
-                clearInterval(waiter);
-                serveRangeFromFile(req, res, tempPath, false);
-                return;
+              if (s.size > 64 * 1024 || attempts >= 40) {
+                if (s.size > 0) {
+                  clearInterval(waiter);
+                  serveRangeFromFile(req, res, tempPath, false);
+                  return;
+                }
               }
             } catch {}
           }
-          if (attempts >= 25) {
+          if (attempts >= 300) {
             clearInterval(waiter);
             if (!res.headersSent) {
               res.writeHead(504, { "Content-Type": "text/plain" });

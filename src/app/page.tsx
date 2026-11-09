@@ -825,7 +825,7 @@ function CinemaApp() {
 
       // 1. Play / Pause state synchronization
       if (msg.playing && video.paused) {
-        if (video.ended) {
+        if (Math.abs(video.currentTime - targetTime) > 0.4 || video.ended) {
           video.currentTime = isFinite(targetTime) ? targetTime : 0;
         }
         playVideoSafe(video);
@@ -840,33 +840,29 @@ function CinemaApp() {
         return;
       }
 
-      // 2. Continuous Micro-Slew Synchronization (NO hard seeks, NO stutter, NO repeating!)
+      // 2. Continuous Micro-Slew Synchronization
       // Micro-adjusts playbackRate seamlessly so the audio and video never stop or jump backwards.
       const absDrift = Math.abs(drift);
       const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
 
-      // Only perform a hard seek if massively desynchronized (> 8.0s) and throttled to once per 10s
-      if (absDrift > 8.0 && timeSinceLastSeek > 10000 && video.readyState >= 2) {
+      // Hard seek if drift exceeds 1.2s (industry standard for watch parties)
+      if (absDrift > 1.2 && timeSinceLastSeek > 2000 && video.readyState >= 2) {
         lastHardSeekTimeRef.current = now;
         try {
           video.currentTime = targetTime;
         } catch {}
         video.playbackRate = 1.0;
-      } else if (drift > 3.0) {
-        video.playbackRate = 1.12;
-      } else if (drift < -3.0) {
-        video.playbackRate = 0.88;
-      } else if (drift > 1.0) {
-        video.playbackRate = 1.06;
-      } else if (drift < -1.0) {
-        video.playbackRate = 0.94;
-      } else if (drift > 0.25) {
-        video.playbackRate = 1.03;
-      } else if (drift < -0.25) {
-        video.playbackRate = 0.97;
-      } else if (drift > 0.05) {
+      } else if (drift > 0.6) {
+        video.playbackRate = 1.08;
+      } else if (drift < -0.6) {
+        video.playbackRate = 0.92;
+      } else if (drift > 0.2) {
+        video.playbackRate = 1.04;
+      } else if (drift < -0.2) {
+        video.playbackRate = 0.96;
+      } else if (drift > 0.08) {
         video.playbackRate = 1.015;
-      } else if (drift < -0.05) {
+      } else if (drift < -0.08) {
         video.playbackRate = 0.985;
       } else {
         video.playbackRate = 1.0;
@@ -1019,7 +1015,7 @@ function CinemaApp() {
         if (isTheatreLoadingRef.current || !desiredPlayingRef.current) return;
         liveRef.current = { time: targetTime, at: now, playing: true };
         if (video.paused) {
-          if (video.ended) {
+          if (Math.abs(video.currentTime - targetTime) > 0.4 || video.ended) {
             video.currentTime = isFinite(targetTime) ? targetTime : 0;
           }
           playVideoSafe(video);
@@ -1028,32 +1024,28 @@ function CinemaApp() {
 
         if (video.seeking) return;
 
-        // Continuous Micro-Slew Synchronization (NO hard seeks, NO pauses, NO repeating!)
+        // Continuous Micro-Slew Synchronization
         const absDrift = Math.abs(drift);
         const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
 
-        // Hard seek ONLY if massively out-of-sync (> 8.0s) and throttled to once per 10s
-        if (absDrift > 8.0 && timeSinceLastSeek > 10000 && video.readyState >= 2) {
+        // Hard seek if drift exceeds 1.2s (industry standard for watch parties)
+        if (absDrift > 1.2 && timeSinceLastSeek > 2000 && video.readyState >= 2) {
           lastHardSeekTimeRef.current = now;
           try {
             video.currentTime = targetTime;
           } catch {}
           video.playbackRate = 1.0;
-        } else if (drift > 3.0) {
-          video.playbackRate = 1.12;
-        } else if (drift < -3.0) {
-          video.playbackRate = 0.88;
-        } else if (drift > 1.0) {
-          video.playbackRate = 1.06;
-        } else if (drift < -1.0) {
-          video.playbackRate = 0.94;
-        } else if (drift > 0.25) {
-          video.playbackRate = 1.03;
-        } else if (drift < -0.25) {
-          video.playbackRate = 0.97;
-        } else if (drift > 0.05) {
+        } else if (drift > 0.6) {
+          video.playbackRate = 1.08;
+        } else if (drift < -0.6) {
+          video.playbackRate = 0.92;
+        } else if (drift > 0.2) {
+          video.playbackRate = 1.04;
+        } else if (drift < -0.2) {
+          video.playbackRate = 0.96;
+        } else if (drift > 0.08) {
           video.playbackRate = 1.015;
-        } else if (drift < -0.05) {
+        } else if (drift < -0.08) {
           video.playbackRate = 0.985;
         } else {
           video.playbackRate = 1.0;
