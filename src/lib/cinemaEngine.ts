@@ -1255,6 +1255,18 @@ export class CinemaEngine {
 
   public showVideoTexture() {
     if (this.screenShaderMaterial && this.videoTexture) {
+      // Strictly verify that the video has actual decoded frame data
+      if (
+        !this.videoElement ||
+        this.videoElement.error ||
+        this.videoElement.readyState < 2 ||
+        !this.videoElement.videoWidth ||
+        !this.videoElement.videoHeight
+      ) {
+        this.showStandbyTexture();
+        return;
+      }
+
       this.screenShaderMaterial.uniforms.map.value = this.videoTexture;
       this.screenShaderMaterial.uniforms.uIsVideo.value = 1.0;
       if (this.screenLight) {
@@ -1267,6 +1279,7 @@ export class CinemaEngine {
         this.applyAspectRatioFit();
       }
       this.videoTexture.needsUpdate = true;
+      this.screenShaderMaterial.needsUpdate = true;
     }
   }
 
@@ -1283,6 +1296,8 @@ export class CinemaEngine {
         this.screenStageBounceLight.intensity = 0.0;
       }
       this.targetVideoBounceIntensity = 0.0;
+      this.defaultScreenTexture.needsUpdate = true;
+      this.screenShaderMaterial.needsUpdate = true;
     }
   }
 
@@ -1826,10 +1841,14 @@ export class CinemaEngine {
       }
     });
 
-    // When paused or ended, keep the video texture showing the frame on screen
+    // When paused or ended, keep the video texture showing the frame on screen (if valid decoded frame exists)
     video.addEventListener("pause", () => {
-      if (this.videoTexture) {
-        this.videoTexture.needsUpdate = true;
+      if (this.videoElement && this.videoElement.readyState >= 2 && this.videoElement.videoWidth > 0 && !this.videoElement.error) {
+        if (this.videoTexture) {
+          this.videoTexture.needsUpdate = true;
+        }
+      } else {
+        this.showStandbyTexture();
       }
     });
 
@@ -1839,8 +1858,19 @@ export class CinemaEngine {
       }
     });
 
-    // If video has any valid source, display video texture immediately
-    if (video.src && video.src !== "" && !video.src.endsWith("/")) {
+    // Error, reset and abort listeners: restore default white cinema screen immediately
+    video.addEventListener("error", () => {
+      this.showStandbyTexture();
+    });
+    video.addEventListener("emptied", () => {
+      this.showStandbyTexture();
+    });
+    video.addEventListener("abort", () => {
+      this.showStandbyTexture();
+    });
+
+    // Initial state: always start with illuminated white standby screen unless video already has decoded frames!
+    if (video.readyState >= 2 && video.videoWidth > 0 && !video.error && !video.paused) {
       this.showVideoTexture();
     } else {
       this.showStandbyTexture();

@@ -503,6 +503,8 @@ function proxyRemoteMediaStream(
         (proxyRes.statusCode === 301 || proxyRes.statusCode === 302 || proxyRes.statusCode === 303 || proxyRes.statusCode === 307) &&
         proxyRes.headers.location
       ) {
+        proxyReq.removeAllListeners("error");
+        proxyReq.on("error", () => {});
         proxyReq.destroy();
         proxyRemoteMediaStream(proxyRes.headers.location, req, res, defaultContentType, customReferer);
         return;
@@ -514,7 +516,9 @@ function proxyRemoteMediaStream(
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
         "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
         "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
-        "Accept-Ranges": "bytes"
+        "Accept-Ranges": "bytes",
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-cache, no-transform"
       };
 
       const upstreamType = String(proxyRes.headers["content-type"] || "");
@@ -579,13 +583,16 @@ function proxyRemoteMediaStream(
   );
 
   proxyReq.on("error", (err) => {
+    if (proxyReq.destroyed) return;
     if (!res.headersSent) {
-      res.writeHead(502, { "Content-Type": "text/plain" });
-      res.end(`Proxy error: ${err.message}`);
+      res.writeHead(502, { "Content-Type": "text/plain", "X-Accel-Buffering": "no" });
+      res.end(`Proxy error: ${err.message || "Connection interrupted"}`);
     }
   });
 
   req.on("close", () => {
+    proxyReq.removeAllListeners("error");
+    proxyReq.on("error", () => {});
     proxyReq.destroy();
   });
 
@@ -603,6 +610,8 @@ function serveLocalMediaFile(req: http.IncomingMessage, res: http.ServerResponse
     res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
     res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
     res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -1942,6 +1951,8 @@ function serveRangeFromFile(
     res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
     res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
     res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -2050,6 +2061,8 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
   res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
   res.setHeader("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
   res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -2150,6 +2163,8 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
 
       // Handle direct CDN redirect (doc-XX-XX-docs.googleusercontent.com)
       if ([301, 302, 303, 307].includes(proxyRes.statusCode || 0) && proxyRes.headers.location) {
+        proxyReq.removeAllListeners("error");
+        proxyReq.on("error", () => {});
         proxyReq.destroy();
         const nextLoc = proxyRes.headers.location;
         // Cache redirected CDN link for subsequent Range requests
@@ -2166,9 +2181,29 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
       // If cached URL returned 403 or 404 (expired direct token), clear cache and retry from scratch
       if ((proxyRes.statusCode === 403 || proxyRes.statusCode === 404) && cached && targetUrl === cached.directUrl) {
         gdriveResolvedCache.delete(fileId!);
+        proxyReq.removeAllListeners("error");
+        proxyReq.on("error", () => {});
         proxyReq.destroy();
         const fallbackUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`;
         return fetchStream(fallbackUrl, "", 0);
+      }
+
+      // Explicitly handle 404 (File not found or private restricted access)
+      if (proxyRes.statusCode === 404) {
+        if (!res.headersSent) {
+          res.writeHead(404, { "Content-Type": "text/plain", "X-Accel-Buffering": "no" });
+          res.end("Google Drive file not found or is private. In Google Drive, click Share -> Change General Access to 'Anyone with the link' (Viewer).");
+        }
+        return;
+      }
+
+      // Explicitly handle 403 (Download quota exceeded or access forbidden)
+      if (proxyRes.statusCode === 403) {
+        if (!res.headersSent) {
+          res.writeHead(403, { "Content-Type": "text/plain", "X-Accel-Buffering": "no" });
+          res.end("Google Drive download quota exceeded or file is private. In Google Drive, click Share -> Change General Access to 'Anyone with the link'.");
+        }
+        return;
       }
 
       const upstreamType = proxyRes.headers["content-type"] || "";
@@ -2201,8 +2236,8 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
 
           console.warn(`[GDrive Stream] Google Drive access error or quota exceeded for ${fileId}`);
           if (!res.headersSent) {
-            res.writeHead(403, { "Content-Type": "text/plain" });
-            res.end("Google Drive download quota exceeded or file is not publicly shared.");
+            res.writeHead(403, { "Content-Type": "text/plain", "X-Accel-Buffering": "no" });
+            res.end("Google Drive download quota exceeded or file is private. In Google Drive, click Share -> Change General Access to 'Anyone with the link' (Viewer).");
           }
         });
         return;
@@ -2229,6 +2264,8 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
         });
 
         // Close this probe request safely
+        proxyReq.removeAllListeners("error");
+        proxyReq.on("error", () => {});
         try { proxyReq.destroy(); } catch {}
 
         const cachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
@@ -2317,19 +2354,24 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
 
       res.on("close", () => {
         try { proxyRes.destroy(); } catch {}
+        proxyReq.removeAllListeners("error");
+        proxyReq.on("error", () => {});
         try { proxyReq.destroy(); } catch {}
       });
     });
 
     proxyReq.on("error", (err) => {
+      if (proxyReq.destroyed) return;
       console.error(`[GDrive Stream] Error for ${fileId}:`, err.message);
       if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end(`Google Drive stream error: ${err.message}`);
+        res.writeHead(502, { "Content-Type": "text/plain", "X-Accel-Buffering": "no" });
+        res.end(`Google Drive stream error: ${err.message || "Connection interrupted"}`);
       }
     });
 
     req.on("close", () => {
+      proxyReq.removeAllListeners("error");
+      proxyReq.on("error", () => {});
       proxyReq.destroy();
     });
 

@@ -152,7 +152,7 @@ function CinemaApp() {
 
   const playVideoSafe = useCallback((video: HTMLVideoElement) => {
     const engine = engineRef.current;
-    if (engine) engine.showVideoTexture();
+    if (engine && video.readyState >= 2 && video.videoWidth > 0) engine.showVideoTexture();
 
     if (isPlayPendingRef.current) return;
     if (!video.paused) return;
@@ -166,7 +166,7 @@ function CinemaApp() {
     if (p !== undefined) {
       p.then(() => {
         isPlayPendingRef.current = false;
-        if (engine) engine.showVideoTexture();
+        if (engine && video.readyState >= 2 && video.videoWidth > 0) engine.showVideoTexture();
       }).catch((err) => {
         isPlayPendingRef.current = false;
         if (err.name === "NotAllowedError") {
@@ -176,7 +176,7 @@ function CinemaApp() {
           video.play()
             .then(() => {
               isPlayPendingRef.current = false;
-              if (engine) engine.showVideoTexture();
+              if (engine && video.readyState >= 2 && video.videoWidth > 0) engine.showVideoTexture();
               setIsPlaybackGateOpen(true);
             })
             .catch(() => {
@@ -189,6 +189,7 @@ function CinemaApp() {
       });
     } else {
       isPlayPendingRef.current = false;
+      if (engine && video.readyState >= 2 && video.videoWidth > 0) engine.showVideoTexture();
     }
   }, []);
 
@@ -409,13 +410,17 @@ function CinemaApp() {
       }
     };
     const onPlay = () => {
-      if (engineRef.current) {
+      if (engineRef.current && video.readyState >= 2 && video.videoWidth > 0) {
         engineRef.current.showVideoTexture();
       }
     };
     const onLoadedData = () => {
-      if (engineRef.current && (video.currentTime > 0 || !video.paused)) {
-        engineRef.current.showVideoTexture();
+      if (engineRef.current) {
+        if (video.readyState >= 2 && video.videoWidth > 0 && (video.currentTime > 0 || !video.paused)) {
+          engineRef.current.showVideoTexture();
+        } else {
+          engineRef.current.showStandbyTexture();
+        }
       }
     };
     const onEnded = () => {
@@ -458,12 +463,30 @@ function CinemaApp() {
 
     const onVideoError = () => {
       const src = video.src || "";
+      if (engineRef.current) {
+        engineRef.current.showStandbyTexture();
+      }
+
       const isLocalOrAsset = src.includes("/assets/movies/") || (typeof window !== "undefined" && src.includes(window.location.host));
       if (src && src.startsWith("http") && !isLocalOrAsset && !src.includes("/api/") && !src.includes(".m3u8")) {
         console.warn("Direct video load failed (likely CORS or format). Retrying via streaming /api/video-proxy...", src);
         const proxyUrl = `/api/video-proxy?url=${encodeURIComponent(src)}`;
         video.src = proxyUrl;
         video.load();
+        return;
+      }
+
+      if (src.includes("/api/gdrive-stream")) {
+        fetch(src, { method: "HEAD" }).catch(() => null).then(async (res) => {
+          if (res && !res.ok) {
+            const txt = await res.text().catch(() => "");
+            showToastRef.current(txt || "Google Drive file is private or inaccessible. In Drive, set 'Anyone with the link' to Viewer.", true);
+          } else {
+            showToastRef.current("Google Drive video could not be loaded. Please ensure the file is shared with 'Anyone with the link' (Viewer).", true);
+          }
+        });
+      } else if (src) {
+        showToastRef.current("Video playback failed. Please check the media URL or file permissions.", true);
       }
     };
 
@@ -671,7 +694,11 @@ function CinemaApp() {
                 playVideoSafe(v);
               }
               if (engineRef.current) {
-                engineRef.current.showVideoTexture();
+                if (v.readyState >= 2 && v.videoWidth > 0 && !v.paused) {
+                  engineRef.current.showVideoTexture();
+                } else {
+                  engineRef.current.showStandbyTexture();
+                }
               }
             }
           }
@@ -1492,7 +1519,11 @@ function CinemaApp() {
     }
     if (engineRef.current) {
       engineRef.current.spatialAudio.resume();
-      engineRef.current.showVideoTexture();
+      if (videoRef.current && videoRef.current.readyState >= 2 && videoRef.current.videoWidth > 0) {
+        engineRef.current.showVideoTexture();
+      } else {
+        engineRef.current.showStandbyTexture();
+      }
     }
   };
 
