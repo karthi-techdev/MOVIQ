@@ -425,6 +425,9 @@ function CinemaApp() {
     };
     const onEnded = () => {
       desiredPlayingRef.current = false;
+      if (engineRef.current) {
+        engineRef.current.showStandbyTexture();
+      }
       if (currentRoomRef.current?.hostId === selfIdRef.current) {
         const dur = video && isFinite(video.duration) ? video.duration : 0;
         const updatedState: MovieState = {
@@ -812,7 +815,7 @@ function CinemaApp() {
         }
       } else if (!msg.state.playing && !video.paused) {
         video.pause();
-        if (!msg.state.url && engine) {
+        if ((msg.state.time === 0 || !msg.state.url) && engine) {
           engine.showStandbyTexture();
         }
       }
@@ -1006,7 +1009,7 @@ function CinemaApp() {
           }
         } else if (!msg.state.playing && !video.paused) {
           video.pause();
-          if (!msg.state.url && engine) {
+          if ((msg.state.time === 0 || !msg.state.url) && engine) {
             engine.showStandbyTexture();
           }
         }

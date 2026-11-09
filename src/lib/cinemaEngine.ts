@@ -618,12 +618,12 @@ export class CinemaEngine {
     const ctx = canvas.getContext("2d");
     if (!ctx) return new THREE.CanvasTexture(canvas);
 
-    // Soft natural matte white cinema projection screen (20% reduced from pure white for realistic cinema lighting)
+    // Authentic mild pearl white theater projection screen material (clean, matte, neutral)
     const grad = ctx.createRadialGradient(960, 540, 120, 960, 540, 1150);
-    grad.addColorStop(0, "#cccccc");   // 80% white (20% reduced white center)
-    grad.addColorStop(0.45, "#c2c6cf"); // Luminous silver-white matte body
-    grad.addColorStop(0.8, "#aeb5c0");  // Clean soft falloff
-    grad.addColorStop(1.0, "#9aa2b0");  // Soft cinema screen edge near bezel
+    grad.addColorStop(0, "#f8fafc"); // Mild pearl white in center
+    grad.addColorStop(0.55, "#f1f5f9"); // Subtle soft cinema screen body
+    grad.addColorStop(0.85, "#e2e8f0"); // Mild screen falloff toward edges
+    grad.addColorStop(1.0, "#d8e0e9"); // Soft edge vignette before bezel
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, 1920, 1080);
 
@@ -1267,6 +1267,12 @@ export class CinemaEngine {
         return;
       }
 
+      // If video is idle (paused at zero time), strictly display the default idle white projection screen
+      if (this.videoElement.paused && this.videoElement.currentTime === 0) {
+        this.showStandbyTexture();
+        return;
+      }
+
       this.screenShaderMaterial.uniforms.map.value = this.videoTexture;
       this.screenShaderMaterial.uniforms.uIsVideo.value = 1.0;
       if (this.screenLight) {
@@ -1290,7 +1296,8 @@ export class CinemaEngine {
       this.screenShaderMaterial.uniforms.uRepeat.value.set(1.0, 1.0);
       this.screenShaderMaterial.uniforms.uOffset.value.set(0.0, 0.0);
       if (this.screenLight) {
-        this.screenLight.intensity = 0.0;
+        this.screenLight.color.setHex(0xf1f5f9);
+        this.screenLight.intensity = 2.0;
       }
       if (this.screenStageBounceLight) {
         this.screenStageBounceLight.intensity = 0.0;
@@ -1799,51 +1806,75 @@ export class CinemaEngine {
     }
 
     const showVideoNow = () => {
-      this.showVideoTexture();
-      if (this.videoTexture) {
-        this.videoTexture.needsUpdate = true;
+      if (!video.paused || video.currentTime > 0) {
+        this.showVideoTexture();
+        if (this.videoTexture) {
+          this.videoTexture.needsUpdate = true;
+        }
+      } else {
+        this.showStandbyTexture();
       }
     };
 
     video.addEventListener("loadeddata", () => {
-      showVideoNow();
+      if (!video.paused && video.currentTime > 0) {
+        this.showVideoTexture();
+      } else {
+        this.showStandbyTexture();
+      }
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
-    video.addEventListener("canplay", showVideoNow);
+    video.addEventListener("canplay", () => {
+      if (!video.paused && video.currentTime > 0) {
+        this.showVideoTexture();
+      } else {
+        this.showStandbyTexture();
+      }
+    });
 
     video.addEventListener("play", () => {
-      showVideoNow();
+      this.showVideoTexture();
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
     video.addEventListener("playing", () => {
-      showVideoNow();
+      this.showVideoTexture();
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
     video.addEventListener("seeked", () => {
-      showVideoNow();
+      if (!video.paused || video.currentTime > 0) {
+        this.showVideoTexture();
+      } else {
+        this.showStandbyTexture();
+      }
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
     video.addEventListener("timeupdate", () => {
-      if (this.screenShaderMaterial && this.screenShaderMaterial.uniforms.uIsVideo.value < 0.5) {
-        showVideoNow();
+      if (!video.paused && video.currentTime > 0) {
+        if (this.screenShaderMaterial && this.screenShaderMaterial.uniforms.uIsVideo.value < 0.5) {
+          this.showVideoTexture();
+        }
+      } else if (video.paused && video.currentTime === 0) {
+        this.showStandbyTexture();
       }
     });
 
-    // When paused or ended, keep the video texture showing the frame on screen (if valid decoded frame exists)
+    // When paused at 0:00 (idle state), strictly display the default white cinema screen
     video.addEventListener("pause", () => {
-      if (this.videoElement && this.videoElement.readyState >= 2 && this.videoElement.videoWidth > 0 && !this.videoElement.error) {
+      if (video.currentTime === 0) {
+        this.showStandbyTexture();
+      } else if (this.videoElement && this.videoElement.readyState >= 2 && this.videoElement.videoWidth > 0 && !this.videoElement.error) {
         if (this.videoTexture) {
           this.videoTexture.needsUpdate = true;
         }
@@ -1853,9 +1884,7 @@ export class CinemaEngine {
     });
 
     video.addEventListener("ended", () => {
-      if (this.videoTexture) {
-        this.videoTexture.needsUpdate = true;
-      }
+      this.showStandbyTexture();
     });
 
     // Error, reset and abort listeners: restore default white cinema screen immediately
@@ -1869,8 +1898,8 @@ export class CinemaEngine {
       this.showStandbyTexture();
     });
 
-    // Initial state: always start with illuminated white standby screen unless video already has decoded frames!
-    if (video.readyState >= 2 && video.videoWidth > 0 && !video.error && !video.paused) {
+    // Initial state: always start with illuminated white standby screen unless video is actively playing!
+    if (!video.paused && video.currentTime > 0 && video.readyState >= 2 && video.videoWidth > 0 && !video.error) {
       this.showVideoTexture();
     } else {
       this.showStandbyTexture();
