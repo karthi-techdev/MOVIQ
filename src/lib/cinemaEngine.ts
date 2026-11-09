@@ -1783,41 +1783,64 @@ export class CinemaEngine {
       (video as any).requestVideoFrameCallback(onVideoFrame);
     }
 
-    video.addEventListener("play", () => {
+    const showVideoNow = () => {
       this.showVideoTexture();
+      if (this.videoTexture) {
+        this.videoTexture.needsUpdate = true;
+      }
+    };
+
+    video.addEventListener("loadeddata", () => {
+      showVideoNow();
+      if ("requestVideoFrameCallback" in video) {
+        (video as any).requestVideoFrameCallback(onVideoFrame);
+      }
+    });
+
+    video.addEventListener("canplay", showVideoNow);
+
+    video.addEventListener("play", () => {
+      showVideoNow();
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
     video.addEventListener("playing", () => {
-      this.showVideoTexture();
+      showVideoNow();
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
     video.addEventListener("seeked", () => {
-      if (this.videoTexture) {
-        this.videoTexture.needsUpdate = true;
-      }
+      showVideoNow();
       if ("requestVideoFrameCallback" in video) {
         (video as any).requestVideoFrameCallback(onVideoFrame);
       }
     });
 
+    video.addEventListener("timeupdate", () => {
+      if (this.screenShaderMaterial && this.screenShaderMaterial.uniforms.uIsVideo.value < 0.5) {
+        showVideoNow();
+      }
+    });
+
+    // When paused or ended, keep the video texture showing the frame on screen
     video.addEventListener("pause", () => {
-      if (video.currentTime === 0) {
-        this.showStandbyTexture();
+      if (this.videoTexture) {
+        this.videoTexture.needsUpdate = true;
       }
     });
 
     video.addEventListener("ended", () => {
-      this.showStandbyTexture();
+      if (this.videoTexture) {
+        this.videoTexture.needsUpdate = true;
+      }
     });
 
-    // Idle plain white screen until playback starts
-    if (!video.paused && video.currentTime > 0) {
+    // If video has any valid source, display video texture immediately
+    if (video.src && video.src !== "" && !video.src.endsWith("/")) {
       this.showVideoTexture();
     } else {
       this.showStandbyTexture();
@@ -3384,7 +3407,7 @@ export class CinemaEngine {
     });
 
     // Ultra-smooth native 60fps/120fps video frame upload to GPU on every render frame
-    if (this.videoTexture && this.videoElement && !this.videoElement.paused && this.videoElement.readyState >= 2) {
+    if (this.videoTexture && this.videoElement && this.videoElement.readyState >= 2) {
       this.videoTexture.needsUpdate = true;
     }
 

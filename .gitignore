@@ -39,7 +39,9 @@ pnpm-debug.log*
 *.avi
 *.mov
 *.m4v
-public/assets/movies/cache/
+public/assets/movies/cache/*
+!public/assets/movies/cache/gdrive-11c3kDdrMRW1a016cVRguTRKPBW71CXCf.mp4
+!public/assets/movies/cache/gdrive-1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e.mp4
 !public/assets/movies/.gitkeep
 !public/assets/movies/big_buck_bunny.mp4
 !public/assets/movies/sintel.mp4

@@ -419,13 +419,45 @@ function extractYouTubeId(url: string): string | null {
   return null;
 }
 
+function normalizeGoogleDriveId(rawId: string): string {
+  const clean = String(rawId || "").trim();
+  const lower = clean.toLowerCase();
+
+  if (lower === "11c3kddrmrw1a016cvrgutrkpbw71cxcf" || lower.startsWith("11c3kd")) {
+    return "11c3kDdrMRW1a016cVRguTRKPBW71CXCf";
+  }
+  if (lower === "1ih98tnczmvkmbmvr7mjf47tbgelt6m4s" || lower.startsWith("1ih98t")) {
+    return "1ih98TnCzmvKmBMvr7mJf47tBGeLT6m4s";
+  }
+  if (lower.startsWith("1eqj8g") || lower.includes("markd5e")) {
+    return "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e";
+  }
+  if (lower.startsWith("17glrp") || lower.includes("kebg2")) {
+    return "17gLrpViQreN4ftTfEpm77B9quT2KeBg2";
+  }
+  if (lower.startsWith("1xqg") || lower.includes("5epzs")) {
+    return "1xqgTfj4k92_hsvbWvv-ZdJA7xO65ePzS";
+  }
+
+  const KNOWN_ID_CORRECTIONS: Record<string, string> = {
+    "1eqj8g_jl4hggwe9bo8rtg51l9markd5e": "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e",
+    "1eqj8g_jl4hgqwe9bo8rtg51i9markd5e": "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e",
+    "1eqj8g_jl4hgqwe9bo8rtg51l9markd5e": "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e",
+    "1eqj8g_jl4hggwe9bo8rtg51i9markd5e": "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e",
+    "17glrpviqren4fttfepm77b9qut2kebg2": "17gLrpViQreN4ftTfEpm77B9quT2KeBg2",
+    "1xqgtfj4k92_hsvbwvv-zdja7xo65epzs": "1xqgTfj4k92_hsvbWvv-ZdJA7xO65ePzS"
+  };
+
+  return KNOWN_ID_CORRECTIONS[lower] || clean;
+}
+
 function extractGoogleDriveId(url: string): string | null {
   const str = String(url || "").trim();
   const match = str.match(
     /(?:(?:drive\.google|drive\.usercontent\.google)\.com\/(?:file\/d\/|open\?id=|uc\?id=|download\?id=)|id=)([a-zA-Z0-9_-]{20,})/i
   );
-  if (match && match[1]) return match[1];
-  if (/^[a-zA-Z0-9_-]{25,45}$/.test(str) && !str.includes("/") && !str.includes(".")) return str;
+  if (match && match[1]) return normalizeGoogleDriveId(match[1]);
+  if (/^[a-zA-Z0-9_-]{25,45}$/.test(str) && !str.includes("/") && !str.includes(".")) return normalizeGoogleDriveId(str);
   return null;
 }
 
@@ -1801,18 +1833,23 @@ interface TranscodeJob {
 
 const activeTranscodeJobs = new Map<string, TranscodeJob>();
 
-function startGdriveTranscodeJob(fileId: string, rawUrl: string): TranscodeJob {
+function startGdriveTranscodeJob(fileId: string, rawUrl: string, cookieHeader = ""): TranscodeJob {
   const cachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
   const tempPath = path.join(CACHE_DIR, `gdrive-${fileId}.tmp.mp4`);
 
   if (fs.existsSync(cachePath)) {
-    const existingJob = activeTranscodeJobs.get(fileId);
-    if (existingJob?.isComplete) {
-      return existingJob;
-    }
-    const job: TranscodeJob = { fileId, cachePath, tempPath, isComplete: true };
-    activeTranscodeJobs.set(fileId, job);
-    return job;
+    try {
+      const s = fs.statSync(cachePath);
+      if (s.size > 512 * 1024) {
+        const existingJob = activeTranscodeJobs.get(fileId);
+        if (existingJob?.isComplete) {
+          return existingJob;
+        }
+        const job: TranscodeJob = { fileId, cachePath, tempPath, isComplete: true };
+        activeTranscodeJobs.set(fileId, job);
+        return job;
+      }
+    } catch {}
   }
 
   const existingJob = activeTranscodeJobs.get(fileId);
@@ -1821,26 +1858,35 @@ function startGdriveTranscodeJob(fileId: string, rawUrl: string): TranscodeJob {
   }
 
   try {
-    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    if (fs.existsSync(tempPath)) {
+      const s = fs.statSync(tempPath);
+      if (s.size < 1024 * 100) fs.unlinkSync(tempPath);
+    }
   } catch {}
 
   const ffmpegArgs = [
     "-y",
     "-reconnect", "1",
     "-reconnect_streamed", "1",
-    "-reconnect_delay_max", "5",
-    "-headers", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
+    "-reconnect_delay_max", "5"
+  ];
+  let headers = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n";
+  if (cookieHeader) {
+    headers += `Cookie: ${cookieHeader}\r\n`;
+  }
+  ffmpegArgs.push("-headers", headers);
+  ffmpegArgs.push(
     "-i", rawUrl,
     "-c:v", "copy",
     "-c:a", "aac",
-    "-b:a", "256k",
+    "-b:a", "192k",
     "-ac", "2",
     "-movflags", "frag_keyframe+empty_moov+default_base_moof",
     "-f", "mp4",
     tempPath
-  ];
+  );
 
-  console.log(`[GDrive Transcode] Starting background transcode for ${fileId}...`);
+  console.log(`[GDrive Transcode] Starting single background transcode for ${fileId}...`);
   const ffmpegCmd = getFfmpegCommand();
   const child = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -2014,16 +2060,7 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
     return;
   }
 
-  // Exact-case normalizer for known Google Drive shared videos (prevents 403 / 404 from case typos)
-  const KNOWN_ID_CORRECTIONS: Record<string, string> = {
-    "1eqj8g_jl4hggwe9bo8rtg51l9markd5e": "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e",
-    "17glrpviqren4fttfepm77b9qut2kebg2": "17gLrpViQreN4ftTfEpm77B9quT2KeBg2",
-    "1xqgtfj4k92_hsvbwvv-zdja7xo65epzs": "1xqgTfj4k92_hsvbWvv-ZdJA7xO65ePzS"
-  };
-
-  if (KNOWN_ID_CORRECTIONS[fileId.toLowerCase()]) {
-    fileId = KNOWN_ID_CORRECTIONS[fileId.toLowerCase()];
-  }
+  fileId = normalizeGoogleDriveId(fileId);
 
   // Check if fully transcoded / cached MP4 file is available on disk for instant local Range streaming
   let diskCachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
@@ -2044,6 +2081,19 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
       if (stat.size > 1024 * 512) {
         console.log(`[GDrive Stream] Serving cached transcoded file for ${fileId} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
         serveRangeFromFile(req, res, diskCachePath, true);
+        return;
+      }
+    } catch {}
+  }
+
+  // Check if background transcode job is currently writing to temp file; if it has buffered enough, stream with Range
+  const tempDiskPath = path.join(CACHE_DIR, `gdrive-${fileId}.tmp.mp4`);
+  if (fs.existsSync(tempDiskPath)) {
+    try {
+      const stat = fs.statSync(tempDiskPath);
+      if (stat.size > 1024 * 512) {
+        console.log(`[GDrive Stream] Serving active transcode buffer for ${fileId} (${(stat.size / 1024 / 1024).toFixed(1)} MB buffered)`);
+        serveRangeFromFile(req, res, tempDiskPath, false);
         return;
       }
     } catch {}
@@ -2166,7 +2216,7 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
 
       // If Google Drive file has MKV container or EAC3/AC3 audio, remux on-the-fly to AAC stereo
       if (isEac3OrMkv) {
-        console.log(`[GDrive Stream] Detected MKV / EAC3 audio container for ${fileId}. Remuxing audio on-the-fly to AAC stereo via pipe:0...`);
+        console.log(`[GDrive Stream] Detected MKV / EAC3 container for ${fileId}. Starting persistent transcode & Range stream...`);
 
         // Cache successful direct stream URL for future seeks
         gdriveResolvedCache.set(fileId!, {
@@ -2175,92 +2225,48 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
           expiresAt: Date.now() + 3 * 3600 * 1000
         });
 
+        // Close this probe request safely
+        try { proxyReq.destroy(); } catch {}
+
         const cachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
         const tempPath = path.join(CACHE_DIR, `gdrive-${fileId}.tmp.mp4`);
 
-        res.writeHead(200, {
-          "Content-Type": "video/mp4",
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-          "Access-Control-Allow-Headers": "Range, Content-Type, Accept",
-          "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges",
-          "Cache-Control": "no-cache, no-store",
-          "Connection": "keep-alive"
-        });
-
-        const ffmpegArgs: string[] = [
-          "-hide_banner",
-          "-loglevel", "error",
-          "-i", "pipe:0",
-          "-c:v", "copy",
-          "-c:a", "aac",
-          "-b:a", "192k",
-          "-ac", "2",
-          "-max_muxing_queue_size", "4096",
-          "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-          "-f", "mp4",
-          "pipe:1"
-        ];
-
-        const ffmpegCmd = getFfmpegCommand();
-        const ff = spawn(ffmpegCmd, ffmpegArgs, { stdio: ["pipe", "pipe", "pipe"] });
-
-        let fileOut: fs.WriteStream | null = null;
-        try {
-          fileOut = fs.createWriteStream(tempPath);
-        } catch {}
-
-        proxyRes.pipe(ff.stdin);
-        ff.stdout.pipe(res);
-        if (fileOut) {
-          ff.stdout.pipe(fileOut);
+        // Check again if cache exists
+        if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 512 * 1024) {
+          serveRangeFromFile(req, res, cachePath, true);
+          return;
         }
 
-        ff.stderr.on("data", (chunk) => {
-          console.warn(`[GDrive Stream] ffmpeg stderr for ${fileId}:`, chunk.toString().slice(0, 200));
-        });
+        // Start ONE background transcode worker if not already running
+        startGdriveTranscodeJob(fileId!, targetUrl, mergedCookies);
 
-        ff.on("close", (code) => {
-          if (fileOut) {
-            fileOut.close(() => {
-              if (code === 0 && fs.existsSync(tempPath)) {
-                try {
-                  const stat = fs.statSync(tempPath);
-                  if (stat.size > 1024 * 512) {
-                    fs.renameSync(tempPath, cachePath);
-                    console.log(`[GDrive Stream] Successfully cached transcoded MP4 to ${cachePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
-                  }
-                } catch (err: any) {
-                  console.warn(`[GDrive Stream] Rename error for ${fileId}:`, err.message);
-                }
+        // Stream initial fragments as soon as available, supporting full Range requests for all clients
+        let attempts = 0;
+        const waiter = setInterval(() => {
+          attempts++;
+          if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 512 * 1024) {
+            clearInterval(waiter);
+            serveRangeFromFile(req, res, cachePath, true);
+            return;
+          }
+          if (fs.existsSync(tempPath)) {
+            try {
+              const s = fs.statSync(tempPath);
+              if (s.size > 256 * 1024 || attempts >= 20) {
+                clearInterval(waiter);
+                serveRangeFromFile(req, res, tempPath, false);
+                return;
               }
-            });
+            } catch {}
           }
-        });
-
-        ff.on("error", (err) => {
-          console.error(`[GDrive Stream] FFmpeg EAC3 transcode spawn error for ${fileId}:`, err.message);
-          try { proxyReq.destroy(); } catch {}
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "text/plain" });
-            res.end("EAC3 audio transcode error");
-          } else {
-            res.end();
+          if (attempts >= 25) {
+            clearInterval(waiter);
+            if (!res.headersSent) {
+              res.writeHead(504, { "Content-Type": "text/plain" });
+              res.end("Stream transcode initialization timeout");
+            }
           }
-        });
-
-        proxyRes.on("error", (err) => {
-          console.error(`[GDrive Stream] Upstream proxy error for ${fileId}:`, err.message);
-          try { ff.kill("SIGKILL"); } catch {}
-        });
-
-        req.on("close", () => {
-          try { ff.kill("SIGKILL"); } catch {}
-          try { proxyReq.destroy(); } catch {}
-          if (fileOut) {
-            try { fileOut.destroy(); } catch {}
-          }
-        });
+        }, 100);
 
         return;
       }

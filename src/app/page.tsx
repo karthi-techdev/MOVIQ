@@ -664,17 +664,15 @@ function CinemaApp() {
               v.addEventListener("error", onReady, { once: true });
             });
 
-            // Ensure video starts playing at the current live room position immediately
+            // Ensure video starts playing and screen texture is active
             const v = videoRef.current;
-            if (v && shouldAutoPlay) {
-              const live = liveRef.current;
-              const liveT = live.playing ? live.time + (Date.now() - live.at) / 1000 : currentPlaybackTime;
-              if (v.readyState >= 1 && Math.abs(v.currentTime - liveT) > 1.2) {
-                try {
-                  v.currentTime = liveT;
-                } catch {}
+            if (v) {
+              if (shouldAutoPlay && v.paused) {
+                playVideoSafe(v);
               }
-              playVideoSafe(v);
+              if (engineRef.current) {
+                engineRef.current.showVideoTexture();
+              }
             }
           }
           setLoadProgress(100);
@@ -826,7 +824,10 @@ function CinemaApp() {
       if (isTheatreLoadingRef.current) return;
 
       // 1. Play / Pause state synchronization
-      if (msg.playing && video.paused && !video.ended) {
+      if (msg.playing && video.paused) {
+        if (video.ended) {
+          video.currentTime = isFinite(targetTime) ? targetTime : 0;
+        }
         playVideoSafe(video);
         return;
       } else if (!msg.playing && !video.paused) {
@@ -1017,7 +1018,10 @@ function CinemaApp() {
         // host actions, so a transient host buffer/pause can never pause the whole theatre.
         if (isTheatreLoadingRef.current || !desiredPlayingRef.current) return;
         liveRef.current = { time: targetTime, at: now, playing: true };
-        if (video.paused && !video.ended) {
+        if (video.paused) {
+          if (video.ended) {
+            video.currentTime = isFinite(targetTime) ? targetTime : 0;
+          }
           playVideoSafe(video);
           return;
         }
@@ -1069,9 +1073,13 @@ function CinemaApp() {
       const v = videoRef.current;
       if (!v || !v.src || isTheatreLoadingRef.current) return;
       if (!desiredPlayingRef.current) return;
-      if (v.ended || v.seeking) return;
+      if (v.seeking) return;
 
       if (v.paused && v.readyState >= 1) {
+        if (v.ended) {
+          const live = liveRef.current;
+          v.currentTime = live.playing ? Math.max(0, live.time + (Date.now() - live.at) / 1000) : 0;
+        }
         playVideoSafe(v);
       }
     }, 1500);
