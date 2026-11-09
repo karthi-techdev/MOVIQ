@@ -13,6 +13,8 @@ import { CinemaEngine } from "../lib/cinemaEngine";
 import { socketClient } from "../lib/socketClient";
 import { VoiceManager } from "../lib/webrtc";
 import { parseVideoUrl } from "../lib/videoUtils";
+import { ittySync } from "../lib/ittySync";
+import { mediaPreloader } from "../lib/mediaPreloader";
 import {
   AudioSpatialMode,
   CameraMode,
@@ -221,6 +223,9 @@ function CinemaApp() {
       targetUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
     }
 
+    // Preload video chunks in browser cache / storage in background
+    mediaPreloader.preload(targetUrl);
+
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
@@ -397,6 +402,10 @@ function CinemaApp() {
       setCurrentRoom(msg.room);
       setUsers(msg.room.users || []);
       setInRoom(true);
+
+      // Connect to itty-sockets room channel for instant, delay-free video playback synchronization
+      const isCurrentHost = msg.room.hostId === msg.userId;
+      ittySync.connectToRoom(msg.room.id, isCurrentHost ? "Host" : "Viewer");
 
       if (msg.hostSecret && typeof window !== "undefined") {
         try {
@@ -690,6 +699,120 @@ function CinemaApp() {
     };
   }, [applyMediaSource]);
 
+  // High-Speed Direct Video Synchronization via itty-sockets (Zero delay, independent of server disconnections)
+  useEffect(() => {
+    if (!inRoom || !currentRoom) return;
+
+    const unsubs: Array<() => void> = [];
+
+    unsubs.push(
+      ittySync.on("movie-loaded", (msg: { movie: MovieState }) => {
+        setMovie(msg.movie);
+        const isAutoPlay = !!msg.movie.playing;
+        const initialTime = Math.max(0, msg.movie.time || 0);
+        applyMediaSource(msg.movie.url, quality, initialTime, isAutoPlay);
+        showToastRef.current(`Now Showing: ${msg.movie.title}`);
+      })
+    );
+
+    unsubs.push(
+      ittySync.on("movie-state", (msg: { state: MovieState; action?: string; by?: string }) => {
+        setMovie(msg.state);
+        const engine = engineRef.current;
+        const video = videoRef.current;
+        if (!video) return;
+
+        const now = Date.now();
+        const elapsed = msg.state.playing && msg.state.serverTime ? (now - msg.state.serverTime) / 1000 : 0;
+        const targetTime = Math.max(0, msg.state.time + elapsed);
+
+        if (msg.action === "seek" || (msg.action !== "volume" && Math.abs(video.currentTime - targetTime) > 2.0)) {
+          if (!video.seeking && video.readyState >= 2) {
+            lastHardSeekTimeRef.current = now;
+            try {
+              if (isFinite(targetTime) && targetTime >= 0) {
+                video.currentTime = targetTime;
+              }
+            } catch {}
+          }
+        }
+
+        if (msg.state.playing && video.paused) {
+          if (video.seeking) {
+            const onSeeked = () => {
+              video.removeEventListener("seeked", onSeeked);
+              playVideoSafe(video);
+            };
+            video.addEventListener("seeked", onSeeked, { once: true });
+          } else {
+            playVideoSafe(video);
+          }
+        } else if (!msg.state.playing && !video.paused) {
+          video.pause();
+          if (!msg.state.url && engine) {
+            engine.showStandbyTexture();
+          }
+        }
+
+        if (typeof msg.state.volume === "number") {
+          const clampedVol = Math.max(0, Math.min(1.5, msg.state.volume));
+          try {
+            video.volume = Math.min(1.0, clampedVol);
+          } catch {}
+          if (engine) {
+            engine.setVolume(clampedVol);
+          }
+          setVideoVolume(clampedVol);
+        }
+      })
+    );
+
+    unsubs.push(
+      ittySync.on("movie-sync", (msg: { time: number; playing: boolean; serverTime: number }) => {
+        const video = videoRef.current;
+        if (!video) return;
+
+        if (currentRoomRef.current?.hostId === selfIdRef.current) return;
+
+        const now = Date.now();
+        const latency = (now - msg.serverTime) / 1000;
+        const targetTime = Math.max(0, msg.time + latency);
+        const drift = targetTime - video.currentTime;
+
+        if (msg.playing && video.paused) {
+          playVideoSafe(video);
+          return;
+        } else if (!msg.playing && !video.paused) {
+          video.pause();
+          return;
+        }
+
+        if (video.seeking) return;
+
+        const absDrift = Math.abs(drift);
+        const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
+
+        if (absDrift > 2.5 && timeSinceLastSeek > 4000 && video.readyState >= 2) {
+          lastHardSeekTimeRef.current = now;
+          try {
+            video.currentTime = targetTime;
+          } catch {}
+          video.playbackRate = 1.0;
+        } else if (drift > 0.3) {
+          video.playbackRate = 1.06;
+        } else if (drift < -0.3) {
+          video.playbackRate = 0.94;
+        } else {
+          video.playbackRate = 1.0;
+        }
+      })
+    );
+
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [inRoom, currentRoom, quality, playVideoSafe]);
+
   // Host Clock Authority: The Host's player is the master clock for the room.
   // Periodically send lightweight playback heartbeats to anchor room time with zero drift.
   useEffect(() => {
@@ -700,6 +823,11 @@ function CinemaApp() {
     const timer = setInterval(() => {
       const video = videoRef.current;
       if (!video || video.readyState < 1) return;
+
+      // 1. Instant zero-latency edge broadcast via itty-sockets
+      ittySync.broadcastMovieSync(video.currentTime, !video.paused);
+
+      // 2. Also keep Render WebSocket backend synchronized
       socketClient.send({
         type: "playback",
         action: "sync",
@@ -743,6 +871,8 @@ function CinemaApp() {
   };
 
   const handleLeaveTheatre = () => {
+    ittySync.disconnect();
+    mediaPreloader.cancel();
     if (voiceManagerRef.current) {
       voiceManagerRef.current.leaveVoice();
     }
@@ -828,6 +958,19 @@ function CinemaApp() {
     const nextState = !movie.playing;
     const curTime = videoRef.current ? videoRef.current.currentTime || 0 : 0;
 
+    const updatedState: MovieState = {
+      ...movie,
+      playing: nextState,
+      time: curTime,
+      updatedAt: Date.now(),
+      serverTime: Date.now()
+    };
+    setMovie(updatedState);
+
+    // 1. Direct zero-latency edge broadcast via itty-sockets (instant for viewers)
+    ittySync.broadcastMovieState(updatedState, nextState ? "play" : "pause", "Host");
+
+    // 2. Also keep Render WebSocket backend synchronized
     socketClient.send({
       type: "playback",
       action: nextState ? "play" : "pause",
@@ -850,6 +993,18 @@ function CinemaApp() {
     }
     setVideoTime(targetTime);
 
+    const updatedState: MovieState = {
+      ...movie,
+      time: targetTime,
+      updatedAt: Date.now(),
+      serverTime: Date.now()
+    };
+    setMovie(updatedState);
+
+    // 1. Direct zero-latency edge broadcast via itty-sockets (instant for viewers)
+    ittySync.broadcastMovieState(updatedState, "seek", "Host");
+
+    // 2. Also keep Render WebSocket backend synchronized
     socketClient.send({
       type: "playback",
       action: "seek",
@@ -875,6 +1030,25 @@ function CinemaApp() {
 
   const handleLoadMovie = (title: string, url: string) => {
     if (!isHost) return;
+    const parsed = parseVideoUrl(url);
+    const updatedMovie: MovieState = {
+      url: parsed.streamUrl,
+      title: title || parsed.title || "Cinema Movie",
+      playing: false,
+      time: 0,
+      volume: 0.8,
+      updatedAt: Date.now()
+    };
+    setMovie(updatedMovie);
+
+    // Preload video chunks in browser cache / storage immediately
+    mediaPreloader.preload(parsed.streamUrl);
+    applyMediaSource(parsed.streamUrl, quality, 0, false);
+
+    // 1. Direct zero-latency movie load via itty-sockets
+    ittySync.broadcastMovieLoaded(updatedMovie);
+
+    // 2. Also keep Render WebSocket backend synchronized
     socketClient.send({
       type: "playback",
       title,
