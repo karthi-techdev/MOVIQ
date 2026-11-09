@@ -419,6 +419,7 @@ export class CinemaEngine {
   private fitMode: "fit" | "fill" = "fit";
   public amoledMode: boolean = true;
   public spatialAudio: CinemaSpatialAudio = new CinemaSpatialAudio();
+  private peerAudioNodes: Map<string, { ctx: AudioContext; source: MediaElementAudioSourceNode; panner: StereoPannerNode }> = new Map();
   private lastVideoTime: number = -1;
 
   // --- Controllable Lighting & Theater Ambiance ---
@@ -2673,6 +2674,14 @@ export class CinemaEngine {
       this.scene.remove(avatar);
       this.avatars.delete(userId);
     }
+    const peerNode = this.peerAudioNodes.get(userId);
+    if (peerNode) {
+      try {
+        peerNode.panner.disconnect();
+        peerNode.source.disconnect();
+      } catch {}
+      this.peerAudioNodes.delete(userId);
+    }
   }
 
   public updateRemoteAvatar(msg: {
@@ -3187,6 +3196,90 @@ export class CinemaEngine {
     }
   }
 
+  // --- Dynamic 3D Proximity Voice Chat System ---
+  // Attenuates remote peer voices based on exact 3D distance:
+  // - 0 to 1.5 meters: 100% full clear volume
+  // - 1.5 to 10 meters: smooth acoustic rolloff
+  // - 10 meters and beyond: 0% completely off (silent)
+  // - 3D stereo panning: balances left/right ears based on avatar position relative to listener
+  public updateProximityVoiceAudio(delta: number) {
+    if (!this.camera || this.avatars.size <= 1) return;
+
+    const listenerPos = this.camera.position;
+    const camForward = new THREE.Vector3();
+    this.camera.getWorldDirection(camForward);
+    const camRight = new THREE.Vector3().crossVectors(camForward, this.camera.up).normalize();
+
+    const minDistance = 1.5; // Within 1.5m: full volume
+    const maxDistance = 10.0; // Beyond 10m: completely off
+
+    this.avatars.forEach((avatar, peerId) => {
+      if (peerId === this.localUserId) return;
+
+      const audioEl = document.getElementById(`audio-peer-${peerId}`) as HTMLAudioElement | null;
+      if (!audioEl) return;
+
+      // Calculate 3D Euclidean distance in world space
+      const distance = listenerPos.distanceTo(avatar.position);
+
+      let targetGain = 0;
+      if (distance <= minDistance) {
+        targetGain = 1.0;
+        audioEl.muted = false;
+      } else if (distance < maxDistance) {
+        // Natural cosine acoustic decay curve between 1.5m and 10m
+        const normalized = (distance - minDistance) / (maxDistance - minDistance);
+        targetGain = Math.cos(normalized * Math.PI * 0.5);
+        audioEl.muted = false;
+      } else {
+        // Strictly 0.0 volume and muted beyond 10 meters (zero audio leakage)
+        targetGain = 0.0;
+        audioEl.volume = 0.0;
+        audioEl.muted = true;
+        return;
+      }
+
+      // Smooth volume transition using frame delta to eliminate clicks or stepping
+      const currentVol = audioEl.volume;
+      const step = Math.min(1.0, 14.0 * delta);
+      const nextVol = currentVol + (targetGain - currentVol) * step;
+      audioEl.volume = Math.max(0, Math.min(1.0, Math.abs(nextVol - targetGain) < 0.01 ? targetGain : nextVol));
+
+      // Calculate 3D stereo panning relative to listener camera orientation
+      const toAvatar = new THREE.Vector3().subVectors(avatar.position, listenerPos);
+      const distLen = toAvatar.length();
+      if (distLen > 0.01) {
+        toAvatar.normalize();
+        const panVal = THREE.MathUtils.clamp(toAvatar.dot(camRight), -1.0, 1.0);
+        this.updatePeerStereoPan(peerId, audioEl, panVal);
+      }
+    });
+  }
+
+  private updatePeerStereoPan(peerId: string, audioEl: HTMLAudioElement, pan: number) {
+    try {
+      let node = this.peerAudioNodes.get(peerId);
+      if (!node) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = (this.spatialAudio as any)["ctx"] || new AudioCtx();
+        if (ctx && ctx.state === "running") {
+          const source = ctx.createMediaElementSource(audioEl);
+          const panner = ctx.createStereoPanner();
+          source.connect(panner);
+          panner.connect(ctx.destination);
+          node = { ctx, source, panner };
+          this.peerAudioNodes.set(peerId, node);
+        }
+      }
+      if (node && node.ctx.state === "running") {
+        node.panner.pan.setTargetAtTime(pan, node.ctx.currentTime, 0.04);
+      }
+    } catch {
+      // Browsers handle element volume natively if Web Audio is restricted
+    }
+  }
+
   // --- Animation Loop ---
 
   private animate() {
@@ -3297,6 +3390,7 @@ export class CinemaEngine {
 
     this.updateLightingAndAmbilight(delta);
     this.spatialAudio.updateListener(this.camera);
+    this.updateProximityVoiceAudio(delta);
 
     if (this.renderer && this.scene && this.camera) {
       this.renderer.render(this.scene, this.camera);
@@ -3678,6 +3772,14 @@ export class CinemaEngine {
     if (this.defaultScreenTexture) {
       this.defaultScreenTexture.dispose();
     }
+
+    this.peerAudioNodes.forEach((node) => {
+      try {
+        node.panner.disconnect();
+        node.source.disconnect();
+      } catch {}
+    });
+    this.peerAudioNodes.clear();
 
     if (this.renderer) {
       this.renderer.dispose();

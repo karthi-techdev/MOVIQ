@@ -79,6 +79,7 @@ function CinemaApp() {
   const isChatOpenRef = useRef<boolean>(false);
   const showToastRef = useRef(showToast);
   const lastHardSeekTimeRef = useRef<number>(0);
+  const isPlayPendingRef = useRef<boolean>(false);
 
   useEffect(() => {
     selfIdRef.current = selfId;
@@ -135,42 +136,38 @@ function CinemaApp() {
     const engine = engineRef.current;
     if (engine) engine.showVideoTexture();
 
-    const doPlay = () => {
-      const p = video.play();
-      if (p !== undefined) {
-        p.then(() => {
-          if (engine) engine.showVideoTexture();
-        }).catch((err) => {
-          if (err.name === "NotAllowedError") {
-            // Autoplay blocked by browser policy: play muted immediately so cinema visual works, then prompt user to unmute
-            video.muted = true;
-            video.play()
-              .then(() => {
-                if (engine) engine.showVideoTexture();
-                setIsPlaybackGateOpen(true);
-              })
-              .catch(() => {
-                setIsPlaybackGateOpen(true);
-              });
-          } else if (err.name === "AbortError") {
-            // Play request was interrupted by a pending seek or state change; retry when seek finishes
-            if (video.seeking) {
-              const onSeeked = () => {
-                video.removeEventListener("seeked", onSeeked);
-                if (video.paused) doPlay();
-              };
-              video.addEventListener("seeked", onSeeked, { once: true });
-            } else {
-              setTimeout(() => {
-                if (video.paused) doPlay();
-              }, 150);
-            }
-          }
-        });
-      }
-    };
+    if (isPlayPendingRef.current) return;
+    if (!video.paused) return;
 
-    doPlay();
+    isPlayPendingRef.current = true;
+    const p = video.play();
+    if (p !== undefined) {
+      p.then(() => {
+        isPlayPendingRef.current = false;
+        if (engine) engine.showVideoTexture();
+      }).catch((err) => {
+        isPlayPendingRef.current = false;
+        if (err.name === "NotAllowedError") {
+          // Autoplay blocked by browser policy: play muted immediately so cinema visual works, then prompt user to unmute
+          video.muted = true;
+          isPlayPendingRef.current = true;
+          video.play()
+            .then(() => {
+              isPlayPendingRef.current = false;
+              if (engine) engine.showVideoTexture();
+              setIsPlaybackGateOpen(true);
+            })
+            .catch(() => {
+              isPlayPendingRef.current = false;
+              setIsPlaybackGateOpen(true);
+            });
+        } else if (err.name === "AbortError") {
+          // Play request was interrupted by a pending seek or state change; safe to resume next frame
+        }
+      });
+    } else {
+      isPlayPendingRef.current = false;
+    }
   }, []);
 
   // Universal Media Loader: maps all videos directly onto the curved 3D cinema screen
@@ -210,17 +207,28 @@ function CinemaApp() {
       targetUrl = `/api/gdrive-stream?id=${targetUrl}&quality=${currentQ}`;
     }
 
+    // Normalize localhost:3000 to relative path if viewing on tunnel or remote origin
+    if (typeof window !== "undefined" && targetUrl.includes("localhost:3000") && !window.location.host.includes("localhost:3000")) {
+      targetUrl = targetUrl.replace(/^https?:\/\/[^\/]+/, "");
+    }
+
     // 3. Route external direct video URLs through CORS streaming proxy to prevent WebGL VideoTexture taint
     const isHls = targetUrl.includes(".m3u8");
     const isExternal =
       (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) &&
       typeof window !== "undefined" &&
       !targetUrl.startsWith(window.location.origin) &&
-      !targetUrl.includes("localhost:3000") &&
       !targetUrl.includes("/api/");
 
     if (isExternal && !targetUrl.includes("/api/video-proxy")) {
-      targetUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
+      targetUrl = `/api/video-proxy?url=${encodeURIComponent(targetUrl)}`;
+    }
+
+    // Set crossOrigin only for truly external URLs, remove for local/proxied streams to preserve tunnel/session cookies
+    if ((targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) && typeof window !== "undefined" && !targetUrl.startsWith(window.location.origin)) {
+      video.crossOrigin = "anonymous";
+    } else {
+      video.removeAttribute("crossorigin");
     }
 
     // Preload video chunks in browser cache / storage in background
@@ -338,10 +346,10 @@ function CinemaApp() {
 
     const onVideoError = () => {
       const src = video.src || "";
-      if (src && src.startsWith("http") && !src.includes("/api/") && !src.includes(".m3u8")) {
+      const isLocalOrAsset = src.includes("/assets/movies/") || (typeof window !== "undefined" && src.includes(window.location.host));
+      if (src && src.startsWith("http") && !isLocalOrAsset && !src.includes("/api/") && !src.includes(".m3u8")) {
         console.warn("Direct video load failed (likely CORS or format). Retrying via streaming /api/video-proxy...", src);
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
-        const proxyUrl = `${apiBase}/api/video-proxy?url=${encodeURIComponent(src)}`;
+        const proxyUrl = `/api/video-proxy?url=${encodeURIComponent(src)}`;
         video.src = proxyUrl;
         video.load();
       }
@@ -633,16 +641,24 @@ function CinemaApp() {
       const absDrift = Math.abs(drift);
       const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
 
-      if (absDrift > 2.5 && timeSinceLastSeek > 4000 && video.readyState >= 2) {
+      if (absDrift > 2.5 && timeSinceLastSeek > 3500 && video.readyState >= 2) {
         lastHardSeekTimeRef.current = now;
         try {
           video.currentTime = targetTime;
         } catch {}
         video.playbackRate = 1.0;
-      } else if (drift > 0.3) {
-        video.playbackRate = 1.06;
-      } else if (drift < -0.3) {
-        video.playbackRate = 0.94;
+      } else if (drift > 1.0) {
+        video.playbackRate = 1.08;
+      } else if (drift < -1.0) {
+        video.playbackRate = 0.92;
+      } else if (drift > 0.25) {
+        video.playbackRate = 1.05;
+      } else if (drift < -0.25) {
+        video.playbackRate = 0.95;
+      } else if (drift > 0.04) {
+        video.playbackRate = 1.02;
+      } else if (drift < -0.04) {
+        video.playbackRate = 0.98;
       } else {
         video.playbackRate = 1.0;
       }
@@ -792,16 +808,24 @@ function CinemaApp() {
         const absDrift = Math.abs(drift);
         const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
 
-        if (absDrift > 2.5 && timeSinceLastSeek > 4000 && video.readyState >= 2) {
+        if (absDrift > 2.5 && timeSinceLastSeek > 3500 && video.readyState >= 2) {
           lastHardSeekTimeRef.current = now;
           try {
             video.currentTime = targetTime;
           } catch {}
           video.playbackRate = 1.0;
-        } else if (drift > 0.3) {
-          video.playbackRate = 1.06;
-        } else if (drift < -0.3) {
-          video.playbackRate = 0.94;
+        } else if (drift > 1.0) {
+          video.playbackRate = 1.08;
+        } else if (drift < -1.0) {
+          video.playbackRate = 0.92;
+        } else if (drift > 0.25) {
+          video.playbackRate = 1.05;
+        } else if (drift < -0.25) {
+          video.playbackRate = 0.95;
+        } else if (drift > 0.04) {
+          video.playbackRate = 1.02;
+        } else if (drift < -0.04) {
+          video.playbackRate = 0.98;
         } else {
           video.playbackRate = 1.0;
         }
@@ -966,6 +990,13 @@ function CinemaApp() {
       serverTime: Date.now()
     };
     setMovie(updatedState);
+
+    // Immediate local playback update for the host (zero latency)
+    if (nextState) {
+      if (videoRef.current) playVideoSafe(videoRef.current);
+    } else {
+      if (videoRef.current) videoRef.current.pause();
+    }
 
     // 1. Direct zero-latency edge broadcast via itty-sockets (instant for viewers)
     ittySync.broadcastMovieState(updatedState, nextState ? "play" : "pause", "Host");
@@ -1220,7 +1251,6 @@ function CinemaApp() {
         className="hidden-video"
         playsInline
         preload="auto"
-        crossOrigin="anonymous"
       />
 
       {/* WebRTC Audio peers container */}
@@ -1258,7 +1288,7 @@ function CinemaApp() {
                 movie={movie}
                 isHost={isHost}
                 currentTime={videoTime}
-                duration={videoDuration || (movie.url?.includes("big_buck_bunny") ? 59.6 : 0)}
+                duration={videoDuration || (movie.url?.includes("big_buck_bunny") ? 10.0 : 0)}
                 volume={videoVolume}
                 fitMode={fitMode}
                 frameMode={frameMode}
