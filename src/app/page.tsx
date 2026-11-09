@@ -1065,7 +1065,7 @@ function CinemaApp() {
     const updatedMovie: MovieState = {
       url: parsed.streamUrl,
       title: title || parsed.title || "Cinema Movie",
-      playing: false,
+      playing: true,
       time: 0,
       volume: 0.8,
       updatedAt: Date.now()
@@ -1074,7 +1074,7 @@ function CinemaApp() {
 
     // Preload video chunks in browser cache / storage immediately
     mediaPreloader.preload(parsed.streamUrl);
-    applyMediaSource(parsed.streamUrl, quality, 0, false);
+    applyMediaSource(parsed.streamUrl, quality, 0, true);
 
     // 1. Direct zero-latency movie load via itty-sockets
     ittySync.broadcastMovieLoaded(updatedMovie);

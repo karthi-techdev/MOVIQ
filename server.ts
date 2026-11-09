@@ -1518,7 +1518,7 @@ function handleMessage(client: ClientSession, raw: any) {
           movie.url = `https://www.youtube.com/watch?v=${ytId}`;
           movie.title = title;
           movie.time = 0;
-          movie.playing = false;
+          movie.playing = true;
           movie.updatedAt = now;
           broadcast(room, {
             type: "movie-loaded",
@@ -1540,7 +1540,7 @@ function handleMessage(client: ClientSession, raw: any) {
           movie.url = `/api/gdrive-stream?id=${gdriveId}`;
           movie.title = title;
           movie.time = 0;
-          movie.playing = false;
+          movie.playing = true;
           movie.updatedAt = now;
           broadcast(room, {
             type: "movie-loaded",
@@ -1564,7 +1564,7 @@ function handleMessage(client: ClientSession, raw: any) {
         movie.url = url;
         movie.title = cleanString(message.title, 100) || "Shared Movie";
         movie.time = 0;
-        movie.playing = false;
+        movie.playing = true;
         movie.updatedAt = now;
         broadcast(room, {
           type: "movie-loaded",
@@ -2009,8 +2009,30 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
     return;
   }
 
+  // Exact-case normalizer for known Google Drive shared videos (prevents 403 / 404 from case typos)
+  const KNOWN_ID_CORRECTIONS: Record<string, string> = {
+    "1eqj8g_jl4hggwe9bo8rtg51l9markd5e": "1EQJ8G_jL4HGgwe9BO8rtg51l9MaRkd5e",
+    "17glrpviqren4fttfepm77b9qut2kebg2": "17gLrpViQreN4ftTfEpm77B9quT2KeBg2",
+    "1xqgtfj4k92_hsvbwvv-zdja7xo65epzs": "1xqgTfj4k92_hsvbWvv-ZdJA7xO65ePzS"
+  };
+
+  if (KNOWN_ID_CORRECTIONS[fileId.toLowerCase()]) {
+    fileId = KNOWN_ID_CORRECTIONS[fileId.toLowerCase()];
+  }
+
   // Check if fully transcoded / cached MP4 file is available on disk for instant local Range streaming
-  const diskCachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
+  let diskCachePath = path.join(CACHE_DIR, `gdrive-${fileId}.mp4`);
+  if (!fs.existsSync(diskCachePath) && fs.existsSync(CACHE_DIR)) {
+    try {
+      const files = fs.readdirSync(CACHE_DIR);
+      const targetLower = `gdrive-${fileId.toLowerCase()}.mp4`;
+      const match = files.find((f) => f.toLowerCase() === targetLower);
+      if (match) {
+        diskCachePath = path.join(CACHE_DIR, match);
+      }
+    } catch {}
+  }
+
   if (fs.existsSync(diskCachePath)) {
     try {
       const stat = fs.statSync(diskCachePath);
@@ -2271,6 +2293,16 @@ async function handleGdriveStream(req: http.IncomingMessage, res: http.ServerRes
 
       res.writeHead(statusCode, resHeaders);
       proxyRes.pipe(res);
+
+      proxyRes.on("error", (err) => {
+        console.error(`[GDrive Stream] Upstream stream pipe error for ${fileId}:`, err.message);
+        try { res.destroy(); } catch {}
+      });
+
+      res.on("close", () => {
+        try { proxyRes.destroy(); } catch {}
+        try { proxyReq.destroy(); } catch {}
+      });
     });
 
     proxyReq.on("error", (err) => {
@@ -2383,6 +2415,18 @@ app.prepare().then(() => {
       }
       if (fs.existsSync(publicPath) && fs.statSync(publicPath).isFile()) {
         serveLocalMediaFile(req, res, publicPath, "video/mp4");
+        return;
+      }
+
+      // High-availability CDN fallback if local sample movie is not yet downloaded or ephemeral
+      if (subPath.toLowerCase().includes("big_buck_bunny")) {
+        console.log("[Media Server] Local Big Buck Bunny file not found on disk; streaming from CDN fallback...");
+        proxyRemoteMediaStream("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4", req, res, "video/mp4");
+        return;
+      }
+      if (subPath.toLowerCase().includes("sintel")) {
+        console.log("[Media Server] Local Sintel file not found on disk; streaming from CDN fallback...");
+        proxyRemoteMediaStream("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4", req, res, "video/mp4");
         return;
       }
     }

@@ -33,18 +33,16 @@ pnpm-debug.log*
 .vscode/
 .idea/
 
-# Local media / video files (Do NOT push local videos to GitHub)
-*.mp4
+# Local media / video files
 *.mkv
 *.webm
 *.avi
 *.mov
 *.m4v
-public/assets/movies/*.mp4
-public/assets/movies/*.mkv
-public/assets/movies/*.webm
 public/assets/movies/cache/
 !public/assets/movies/.gitkeep
+!public/assets/movies/big_buck_bunny.mp4
+!public/assets/movies/sintel.mp4
 
 # Temporary / scratch / test scripts
 scratch/
