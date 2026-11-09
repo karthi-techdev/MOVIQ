@@ -418,6 +418,26 @@ function CinemaApp() {
         engineRef.current.showVideoTexture();
       }
     };
+    const onEnded = () => {
+      desiredPlayingRef.current = false;
+      if (currentRoomRef.current?.hostId === selfIdRef.current) {
+        const dur = video && isFinite(video.duration) ? video.duration : 0;
+        const updatedState: MovieState = {
+          ...movie,
+          playing: false,
+          time: dur,
+          serverTime: Date.now(),
+          updatedAt: Date.now()
+        };
+        setMovie(updatedState);
+        ittySync.broadcastMovieState(updatedState, "pause", "Host");
+        socketClient.send({
+          type: "playback",
+          action: "pause",
+          time: dur
+        });
+      }
+    };
 
     // Stalled / waiting buffer auto-recovery
     let stallRecoveryTimeout: NodeJS.Timeout | null = null;
@@ -452,6 +472,7 @@ function CinemaApp() {
     video.addEventListener("loadedmetadata", onDurationChange);
     video.addEventListener("play", onPlay);
     video.addEventListener("loadeddata", onLoadedData);
+    video.addEventListener("ended", onEnded);
     video.addEventListener("waiting", onStallOrWait);
     video.addEventListener("stalled", onStallOrWait);
     video.addEventListener("canplay", onClearStall);
@@ -465,6 +486,7 @@ function CinemaApp() {
       video.removeEventListener("loadedmetadata", onDurationChange);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("loadeddata", onLoadedData);
+      video.removeEventListener("ended", onEnded);
       video.removeEventListener("waiting", onStallOrWait);
       video.removeEventListener("stalled", onStallOrWait);
       video.removeEventListener("canplay", onClearStall);
@@ -741,9 +763,9 @@ function CinemaApp() {
       const elapsed = rawElapsed > 0 && rawElapsed < 2 ? rawElapsed : 0; // ignore device clock skew
       const targetTime = Math.max(0, msg.state.time + elapsed);
 
-      // Only perform a hard seek on explicit seek actions or if out-of-sync by more than 2.0 seconds (NEVER on volume)
-      if (msg.action === "seek" || (msg.action !== "volume" && Math.abs(video.currentTime - targetTime) > 2.0)) {
-        if (!video.seeking && video.readyState >= 2) {
+      // Hard seek ONLY on explicit seek actions by the host (scrubber interaction)
+      if (msg.action === "seek") {
+        if (!video.seeking && video.readyState >= 1) {
           lastHardSeekTimeRef.current = now;
           try {
             if (isFinite(targetTime) && targetTime >= 0) {
@@ -804,9 +826,9 @@ function CinemaApp() {
       if (isTheatreLoadingRef.current) return;
 
       // 1. Play / Pause state synchronization
-      if (msg.playing && video.paused) {
+      if (msg.playing && video.paused && !video.ended) {
         playVideoSafe(video);
-        return; // Avoid seeking in the same tick as initiating play
+        return;
       } else if (!msg.playing && !video.paused) {
         video.pause();
         return;
@@ -817,30 +839,34 @@ function CinemaApp() {
         return;
       }
 
-      // 2. High-precision sync algorithm without stalls:
-      // - If drift is minor/moderate (0.3s to 2.5s): smoothly slew playbackRate (+6% or -6%)
-      // - If drift is large (> 2.5s) AND at least 4s since last seek AND video ready: throttled hard seek
+      // 2. Continuous Micro-Slew Synchronization (NO hard seeks, NO stutter, NO repeating!)
+      // Micro-adjusts playbackRate seamlessly so the audio and video never stop or jump backwards.
       const absDrift = Math.abs(drift);
       const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
 
-      if (absDrift > 2.5 && timeSinceLastSeek > 3500 && video.readyState >= 2) {
+      // Only perform a hard seek if massively desynchronized (> 8.0s) and throttled to once per 10s
+      if (absDrift > 8.0 && timeSinceLastSeek > 10000 && video.readyState >= 2) {
         lastHardSeekTimeRef.current = now;
         try {
           video.currentTime = targetTime;
         } catch {}
         video.playbackRate = 1.0;
+      } else if (drift > 3.0) {
+        video.playbackRate = 1.12;
+      } else if (drift < -3.0) {
+        video.playbackRate = 0.88;
       } else if (drift > 1.0) {
-        video.playbackRate = 1.08;
+        video.playbackRate = 1.06;
       } else if (drift < -1.0) {
-        video.playbackRate = 0.92;
+        video.playbackRate = 0.94;
       } else if (drift > 0.25) {
-        video.playbackRate = 1.05;
+        video.playbackRate = 1.03;
       } else if (drift < -0.25) {
-        video.playbackRate = 0.95;
-      } else if (drift > 0.04) {
-        video.playbackRate = 1.02;
-      } else if (drift < -0.04) {
-        video.playbackRate = 0.98;
+        video.playbackRate = 0.97;
+      } else if (drift > 0.05) {
+        video.playbackRate = 1.015;
+      } else if (drift < -0.05) {
+        video.playbackRate = 0.985;
       } else {
         video.playbackRate = 1.0;
       }
@@ -932,8 +958,9 @@ function CinemaApp() {
         const elapsed = rawElapsed > 0 && rawElapsed < 2 ? rawElapsed : 0; // ignore device clock skew
         const targetTime = Math.max(0, msg.state.time + elapsed);
 
-        if (msg.action === "seek" || (msg.action !== "volume" && Math.abs(video.currentTime - targetTime) > 2.0)) {
-          if (!video.seeking && video.readyState >= 2) {
+        // Hard seek ONLY on explicit seek actions by the host
+        if (msg.action === "seek") {
+          if (!video.seeking && video.readyState >= 1) {
             lastHardSeekTimeRef.current = now;
             try {
               if (isFinite(targetTime) && targetTime >= 0) {
@@ -990,34 +1017,40 @@ function CinemaApp() {
         // host actions, so a transient host buffer/pause can never pause the whole theatre.
         if (isTheatreLoadingRef.current || !desiredPlayingRef.current) return;
         liveRef.current = { time: targetTime, at: now, playing: true };
-        if (video.paused) {
+        if (video.paused && !video.ended) {
           playVideoSafe(video);
           return;
         }
 
         if (video.seeking) return;
 
+        // Continuous Micro-Slew Synchronization (NO hard seeks, NO pauses, NO repeating!)
         const absDrift = Math.abs(drift);
         const timeSinceLastSeek = now - lastHardSeekTimeRef.current;
 
-        if (absDrift > 2.5 && timeSinceLastSeek > 3500 && video.readyState >= 2) {
+        // Hard seek ONLY if massively out-of-sync (> 8.0s) and throttled to once per 10s
+        if (absDrift > 8.0 && timeSinceLastSeek > 10000 && video.readyState >= 2) {
           lastHardSeekTimeRef.current = now;
           try {
             video.currentTime = targetTime;
           } catch {}
           video.playbackRate = 1.0;
+        } else if (drift > 3.0) {
+          video.playbackRate = 1.12;
+        } else if (drift < -3.0) {
+          video.playbackRate = 0.88;
         } else if (drift > 1.0) {
-          video.playbackRate = 1.08;
+          video.playbackRate = 1.06;
         } else if (drift < -1.0) {
-          video.playbackRate = 0.92;
+          video.playbackRate = 0.94;
         } else if (drift > 0.25) {
-          video.playbackRate = 1.05;
+          video.playbackRate = 1.03;
         } else if (drift < -0.25) {
-          video.playbackRate = 0.95;
-        } else if (drift > 0.04) {
-          video.playbackRate = 1.02;
-        } else if (drift < -0.04) {
-          video.playbackRate = 0.98;
+          video.playbackRate = 0.97;
+        } else if (drift > 0.05) {
+          video.playbackRate = 1.015;
+        } else if (drift < -0.05) {
+          video.playbackRate = 0.985;
         } else {
           video.playbackRate = 1.0;
         }
@@ -1029,67 +1062,22 @@ function CinemaApp() {
     };
   }, [inRoom, currentRoom, quality, playVideoSafe]);
 
-  // Playback watchdog: whenever the room is playing, keep the player playing and recover stalled streams.
+  // Playback watchdog: keep player playing if room intent is playing and player is paused
   useEffect(() => {
     if (!inRoom) return;
-    let lastTime = -1;
-    let stuckSince = 0;
-    let nudged = false;
-    let lastReload = 0;
-
     const iv = setInterval(() => {
       const v = videoRef.current;
       if (!v || !v.src || isTheatreLoadingRef.current) return;
+      if (!desiredPlayingRef.current) return;
+      if (v.ended || v.seeking) return;
 
-      if (!desiredPlayingRef.current) {
-        lastTime = -1;
-        stuckSince = 0;
-        nudged = false;
-        return;
+      if (v.paused && v.readyState >= 1) {
+        playVideoSafe(v);
       }
-      if (v.ended) return;
-
-      if (v.paused) {
-        lastTime = -1;
-        stuckSince = 0;
-        nudged = false;
-        if (!v.seeking && v.readyState >= 2) playVideoSafe(v);
-        return;
-      }
-
-      if (Math.abs(v.currentTime - lastTime) > 0.01) {
-        lastTime = v.currentTime;
-        stuckSince = 0;
-        nudged = false;
-        return;
-      }
-
-      const now = Date.now();
-      if (!stuckSince) {
-        stuckSince = now;
-        return;
-      }
-      const stuckFor = now - stuckSince;
-      if (stuckFor > 4000 && !nudged) {
-        nudged = true;
-        try {
-          v.currentTime = v.currentTime + 0.05;
-        } catch {}
-        v.play().catch(() => {});
-      } else if (stuckFor > 12000 && now - lastReload > 15000 && activeMediaRef.current.url) {
-        lastReload = now;
-        stuckSince = 0;
-        nudged = false;
-        if (currentRoomRef.current?.hostId === selfIdRef.current) {
-          liveRef.current = { time: v.currentTime, at: now, playing: true };
-        }
-        showToastRef.current("Re-syncing stream...");
-        applyMediaSource(activeMediaRef.current.url, quality, undefined, true, true);
-      }
-    }, 1000);
+    }, 1500);
 
     return () => clearInterval(iv);
-  }, [inRoom, applyMediaSource, playVideoSafe, quality]);
+  }, [inRoom, playVideoSafe]);
 
   // Host Clock Authority: The Host's player is the master clock for the room.
   // Periodically send lightweight playback heartbeats to anchor room time with zero drift.

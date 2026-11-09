@@ -53,17 +53,9 @@ export class MediaPreloader {
     return this.swReady;
   }
 
-  /** Tag a movie stream URL with the room session so the service worker caches it per room. */
-  public wrap(mediaUrl: string, roomId?: string | null): string {
-    if (!this.swReady || !roomId || typeof window === "undefined") return mediaUrl;
-    try {
-      const u = new URL(mediaUrl, window.location.origin);
-      if (u.origin !== window.location.origin || !MEDIA_RE.test(u.pathname)) return mediaUrl;
-      u.searchParams.set("mq_room", roomId.toLowerCase());
-      return u.pathname + u.search;
-    } catch {
-      return mediaUrl;
-    }
+  /** Media URLs stream directly via native browser HTTP streaming pipeline for zero lag. */
+  public wrap(mediaUrl: string, _roomId?: string | null): string {
+    return mediaUrl;
   }
 
   /** Download static assets (characters, theatre models) so they land in the browser cache. */
