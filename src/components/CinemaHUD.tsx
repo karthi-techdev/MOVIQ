@@ -260,7 +260,7 @@ export const CinemaHUD: React.FC<CinemaHUDProps> = ({
       <div className={`seat-panel glass-panel auto-ui ${focusMode ? "hidden-by-focus" : ""}`}>
         <span className="seat-panel-label">YOUR SEAT</span>
         <strong id="seat-status">
-          {currentSeat ? `Row ${currentSeat.row}, Seat ${currentSeat.col}` : "Standing"}
+          {currentSeat ? `Row ${String.fromCharCode(64 + currentSeat.row)} · Seat ${currentSeat.col}` : "Standing"}
         </strong>
         {currentSeat && (
           <button

@@ -14,7 +14,7 @@ const dev = process.env.NODE_ENV !== "production";
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_MESSAGE_SIZE = 64 * 1024;
-const MAX_USERS_PER_ROOM = 1000;
+const MAX_USERS_PER_ROOM = 100;
 
 const DEFAULT_MOVIE: MovieState = {
   url: "/assets/movies/big_buck_bunny.mp4",
@@ -1490,7 +1490,7 @@ function handleMessage(client: ClientSession, raw: any) {
     case "sit": {
       if (!room) return;
       const seatIndex = Number(message.seat ?? message.seatIndex ?? message.seatId);
-      if (isNaN(seatIndex)) return;
+      if (isNaN(seatIndex) || seatIndex < 0 || seatIndex >= 100) return;
 
       const currentOccupant = room.seats.get(seatIndex);
       if (currentOccupant && currentOccupant !== client.id) {
@@ -1804,7 +1804,7 @@ function handleConnection(socket: WebSocket) {
     speaking: false,
     muted: true,
     inVoice: false,
-    position: { x: -7.7, y: 0.55, z: -3.5 },
+    position: { x: -2.78, y: 0.12, z: -4.00 },
     rotation: 0,
     joinedAt: Date.now(),
     isAlive: true
