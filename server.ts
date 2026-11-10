@@ -14,7 +14,18 @@ const dev = process.env.NODE_ENV !== "production";
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_MESSAGE_SIZE = 64 * 1024;
-const MAX_USERS_PER_ROOM = 100;
+const MAX_USERS_PER_ROOM = 300;
+
+function getRandomExitSpawn(): { position: Vector3Like; rotation: number } {
+  const isLeft = Math.random() < 0.5;
+  const xOffset = 5.05 + Math.random() * 0.35; // 5.05..5.40m in front of the +-5.85m wall exit doors
+  const z = -6.22 + Math.random() * 0.54;      // -6.22..-5.68m centered on the -5.95m exit doorway
+  const rotJitter = (Math.random() - 0.5) * 0.32;
+  return {
+    position: { x: isLeft ? -xOffset : xOffset, y: 0.0, z },
+    rotation: (isLeft ? Math.PI * 0.5 : -Math.PI * 0.5) + rotJitter
+  };
+}
 
 const DEFAULT_MOVIE: MovieState = {
   url: "/assets/movies/big_buck_bunny.mp4",
@@ -247,7 +258,12 @@ function joinRoom(client: ClientSession, room: RoomSession, username: string, pr
   if (room.users.size >= (room.maxUsers || MAX_USERS_PER_ROOM)) {
     throw new Error("This theatre is full.");
   }
+  const exitSpawn = getRandomExitSpawn();
   client.username = cleanUsername(username) || client.username;
+  client.position = exitSpawn.position;
+  client.rotation = exitSpawn.rotation;
+  client.seated = false;
+  client.seatIndex = null;
   client.room = room;
   client.colorIndex = room.users.size % AVATAR_COLORS.length;
   client.avatarColor = AVATAR_COLORS[client.colorIndex];
@@ -1490,7 +1506,7 @@ function handleMessage(client: ClientSession, raw: any) {
     case "sit": {
       if (!room) return;
       const seatIndex = Number(message.seat ?? message.seatIndex ?? message.seatId);
-      if (isNaN(seatIndex) || seatIndex < 0 || seatIndex >= 100) return;
+      if (isNaN(seatIndex) || seatIndex < 0 || seatIndex >= 300) return;
 
       const currentOccupant = room.seats.get(seatIndex);
       if (currentOccupant && currentOccupant !== client.id) {
@@ -1787,6 +1803,7 @@ function handleMessage(client: ClientSession, raw: any) {
 }
 
 function handleConnection(socket: WebSocket) {
+  const initialSpawn = getRandomExitSpawn();
   const client: ClientSession = {
     id: generateId(),
     socket,
@@ -1804,8 +1821,8 @@ function handleConnection(socket: WebSocket) {
     speaking: false,
     muted: true,
     inVoice: false,
-    position: { x: -2.78, y: 0.12, z: -4.00 },
-    rotation: 0,
+    position: initialSpawn.position,
+    rotation: initialSpawn.rotation,
     joinedAt: Date.now(),
     isAlive: true
   };

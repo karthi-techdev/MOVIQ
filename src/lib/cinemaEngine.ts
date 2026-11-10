@@ -100,17 +100,17 @@ export class CinemaSpatialAudio {
         this.presenceNode.Q.value = 0.9;
         this.presenceNode.gain.value = 1.4;
 
-        // 4. 3D Positional Panner anchored at the Grand Curved Cinema Screen (0, 3.80, -9.50)
+        // 4. 3D Positional Panner anchored at the Grand 300-Seat Curved Cinema Screen (0, 4.10, -9.10)
         this.pannerNode = this.ctx.createPanner();
         this.pannerNode.panningModel = "HRTF";
         this.pannerNode.distanceModel = "inverse";
         this.pannerNode.refDistance = 10;
-        this.pannerNode.maxDistance = 55;
+        this.pannerNode.maxDistance = 60;
         this.pannerNode.rolloffFactor = 0.65;
         this.pannerNode.coneInnerAngle = 360;
         this.pannerNode.positionX.value = 0;
-        this.pannerNode.positionY.value = 3.20;
-        this.pannerNode.positionZ.value = -8.00;
+        this.pannerNode.positionY.value = 4.10;
+        this.pannerNode.positionZ.value = -9.10;
 
         // 5. Dolby Atmos 3D Surround & Height Layer
         this.atmosSurroundDelayL = this.ctx.createDelay(0.1);
@@ -221,15 +221,15 @@ export class CinemaSpatialAudio {
     }
   }
 
-  // Generates synthetic panoramic cinema hall impulse response
+  // Generates synthetic 300-seat panoramic curved IMAX cinema hall impulse response
   private createCinemaReverbImpulse(ctx: AudioContext): AudioBuffer {
     const rate = ctx.sampleRate;
-    const length = Math.floor(rate * 1.10); // 1.10s auditorium acoustic decay
+    const length = Math.floor(rate * 1.20); // 1.20s auditorium acoustic decay
     const impulse = ctx.createBuffer(2, length, rate);
     const left = impulse.getChannelData(0);
     const right = impulse.getChannelData(1);
 
-    const predelay = Math.floor(rate * 0.020); // 20ms initial auditorium boundary reflection
+    const predelay = Math.floor(rate * 0.022); // 22ms initial auditorium boundary reflection
 
     for (let i = 0; i < length; i++) {
       if (i < predelay) {
@@ -389,7 +389,11 @@ export class CinemaEngine {
 
   public localUserId: string = "";
   public currentSeatIndex: number | null = null;
-  public position: THREE.Vector3 = new THREE.Vector3(-2.78, 0.12, -4.00);
+  public position: THREE.Vector3 = new THREE.Vector3(
+    Math.random() < 0.5 ? -5.22 : 5.22,
+    0.0,
+    -5.95 + (Math.random() - 0.5) * 0.40
+  );
   public rotation: number = 0;
   public verticalVelocity: number = 0;
   public isGrounded: boolean = true;
@@ -407,11 +411,11 @@ export class CinemaEngine {
   private modelCache: Map<string, Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] }>> = new Map();
   private gltfLoader: GLTFLoader = new GLTFLoader();
 
-  // Grand Curved Panoramic Cinema Screen Geometry (5 Rows x 20 Seats = 100 Seats)
-  public screenWidth: number = 10.4;
-  public screenHeight: number = 4.8;
-  public screenRadius: number = 12.0;
-  public screenPosition: THREE.Vector3 = new THREE.Vector3(0, 3.20, -8.00);
+  // Grand Curved Panoramic Cinema Screen Geometry (12 Rows x 25 Tight-Joined Seats = 300 Seats)
+  public screenWidth: number = 11.7;
+  public screenHeight: number = 5.40;
+  public screenRadius: number = 13.6;
+  public screenPosition: THREE.Vector3 = new THREE.Vector3(0, 4.10, -9.10);
 
   public screenMesh: THREE.Mesh | null = null;
   public screenMaterial: THREE.MeshBasicMaterial | null = null;
@@ -589,7 +593,7 @@ export class CinemaEngine {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(10, 12);
+    texture.repeat.set(11, 15);
     return texture;
   }
 
@@ -613,7 +617,7 @@ export class CinemaEngine {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(10, 12);
+    texture.repeat.set(11, 15);
     return texture;
   }
 
@@ -661,20 +665,20 @@ export class CinemaEngine {
       metalness: 0.1
     });
 
-    // Main Auditorium Floor (Spans 12 x 14 for 5-row boutique IMAX cinema)
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(12, 14), carpetMat);
+    // Main Auditorium Floor (Spans 13.0 x 16.5, sized snugly to tightly joined 12-row x 25-seat layout)
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(13.0, 16.5), carpetMat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(0, 0, -3.20);
+    floor.position.set(0, 0, -2.15);
     floor.receiveShadow = true;
     this.scene.add(floor);
 
-    // Suspended Grid Ceiling
-    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(12, 14), ceilingMat);
+    // Suspended Grid Ceiling (7.60m high for elevated 2.16m stadium ramp & 5.40m tall curved screen)
+    const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(13.0, 16.5), ceilingMat);
     ceiling.rotation.x = Math.PI / 2;
-    ceiling.position.set(0, 6.20, -3.20);
+    ceiling.position.set(0, 7.60, -2.15);
     this.scene.add(ceiling);
 
-    // Outer Enclosure Walls (Snug proscenium enclosure with zero gaps)
+    // Outer Enclosure Walls (Snug proscenium enclosure flush to 25-seat blocks with zero gaps)
     const addWall = (w: number, h: number, d: number, x: number, y: number, z: number) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wallMat);
       m.position.set(x, y, z);
@@ -683,10 +687,10 @@ export class CinemaEngine {
       return m;
     };
 
-    addWall(12.0, 9.0, 1.0, 0, 4.0, -8.90);     // Front Proscenium Wall (inner face at -8.40)
-    addWall(12.0, 9.0, 1.0, 0, 4.0, 2.35);      // Back Rear Wall (inner face at +1.85, flush behind Row E)
-    addWall(1.0, 9.0, 13.0, -5.70, 4.0, -3.20); // Left Side Wall (inner face at -5.20, flush to left tier)
-    addWall(1.0, 9.0, 13.0, 5.70, 4.0, -3.20);  // Right Side Wall (inner face at +5.20, flush to right tier)
+    addWall(13.0, 9.5, 1.0, 0, 4.30, -10.10);   // Front Proscenium Wall (inner face at -9.60)
+    addWall(13.0, 9.5, 1.0, 0, 4.30, 5.80);     // Back Rear Wall (inner face at +5.30 behind Row L)
+    addWall(1.0, 9.5, 16.5, -6.35, 4.30, -2.15); // Left Side Wall (inner face at -5.85, flush to left VIP tier)
+    addWall(1.0, 9.5, 16.5, 6.35, 4.30, -2.15);  // Right Side Wall (inner face at +5.85, flush to right VIP tier)
 
     // Curved Front Stage & Steps (Low Profile with Clean Accessible Stairs)
     this.buildCurvedStage();
@@ -699,6 +703,9 @@ export class CinemaEngine {
 
     // Rear Projection Booth Window & Volumetric Cinema Projector Beam
     this.buildProjectionBooth();
+
+    // Dual Realistic Cinema Exit Doors with Mildly Glowing EXIT Signs
+    this.buildExitDoors();
   }
 
   private buildCurvedStage() {
@@ -724,35 +731,35 @@ export class CinemaEngine {
 
     const stageGroup = new THREE.Group();
 
-    // Broad panoramic proscenium stage platform (spans wall to wall 10.4m)
-    const stageWidth = 10.4;
-    const stageDepth = 2.2;
-    const stageHeight = 0.22;
+    // Broad panoramic proscenium stage platform (spans wall to wall 11.70m)
+    const stageWidth = 11.70;
+    const stageDepth = 2.40;
+    const stageHeight = 0.25;
     const stageBase = new THREE.Mesh(new THREE.BoxGeometry(stageWidth, stageHeight, stageDepth), stageTopMat);
-    stageBase.position.set(0, stageHeight / 2, -7.30);
+    stageBase.position.set(0, stageHeight / 2, -8.40);
     stageBase.receiveShadow = true;
     stageGroup.add(stageBase);
 
     // Front edge nosing trim for stage apron
     const frontTrim = new THREE.Mesh(new THREE.BoxGeometry(stageWidth, 0.02, 0.08), stageEdgeMat);
-    frontTrim.position.set(0, stageHeight, -6.20);
+    frontTrim.position.set(0, stageHeight, -7.20);
     stageGroup.add(frontTrim);
 
-    // 2 Broad Curved Transition Steps Leading Down to Floor (R=12.0) with Seamless Curved LED Tubes
+    // 2 Broad Curved Transition Steps Leading Down to Floor (R=13.6) with Seamless Curved LED Tubes
     const stepConfigs = [
-      { h: 0.15, zOffset: -5.85 },
-      { h: 0.075, zOffset: -5.55 }
+      { h: 0.17, zOffset: -6.80 },
+      { h: 0.085, zOffset: -6.45 }
     ];
-    const stepR = 12.0;
+    const stepR = 13.6;
 
     stepConfigs.forEach((cfg) => {
       const h = cfg.h;
       const zOffset = cfg.zOffset;
       const curvePoints: THREE.Vector3[] = [];
 
-      for (let i = 0; i <= 48; i++) {
-        const u = (i / 48) * 2 - 1;
-        const x = u * 5.2;
+      for (let i = 0; i <= 52; i++) {
+        const u = (i / 52) * 2 - 1;
+        const x = u * 5.85;
         const z = zOffset - (x * x) / (2 * stepR);
         curvePoints.push(new THREE.Vector3(x, h, z));
       }
@@ -765,7 +772,7 @@ export class CinemaEngine {
         const len = p1.distanceTo(p2);
         const angle = Math.atan2(p2.x - p1.x, p2.z - p1.z);
 
-        const riserMesh = new THREE.Mesh(new THREE.BoxGeometry(len + 0.02, h, 0.45), stageTopMat);
+        const riserMesh = new THREE.Mesh(new THREE.BoxGeometry(len + 0.02, h, 0.48), stageTopMat);
         riserMesh.position.set(mid.x, h / 2, mid.z);
         riserMesh.rotation.y = angle - Math.PI / 2;
         riserMesh.receiveShadow = true;
@@ -774,10 +781,10 @@ export class CinemaEngine {
 
       // Seamless, Continuous Curved LED Tube on the Step Nosing (50% thinner, 0 visible seams)
       const nosingPoints: THREE.Vector3[] = [];
-      const nosingZOffset = zOffset + 0.20;
-      for (let i = 0; i <= 64; i++) {
-        const u = (i / 64) * 2 - 1;
-        const x = u * 5.2;
+      const nosingZOffset = zOffset + 0.22;
+      for (let i = 0; i <= 72; i++) {
+        const u = (i / 72) * 2 - 1;
+        const x = u * 5.85;
         const z = nosingZOffset - (x * x) / (2 * stepR);
         nosingPoints.push(new THREE.Vector3(x, h + 0.006, z));
       }
@@ -799,11 +806,11 @@ export class CinemaEngine {
 
   private buildCeilingLights() {
     this.ceilingLightGroup = new THREE.Group();
-    const ceilingY = 6.17; // Flush against auditorium ceiling plane at 6.20
+    const ceilingY = 7.56; // Flush against auditorium ceiling plane at 7.60
 
-    // 3 Rows along Z, 3 columns along X for boutique 100-seat auditorium (3x3 = 9 lights)
-    const rowZs = [-5.0, -1.8, 1.0];
-    const colXs = [-2.8, 0.0, 2.8];
+    // 4 Rows along Z, 3 columns along X for 300-seat auditorium (4x3 = 12 lights)
+    const rowZs = [-6.2, -2.2, 1.5, 4.5];
+    const colXs = [-3.5, 0.0, 3.5];
 
     const isInitialOn = this.lightingState.ceiling;
     this.ceilingDiffuserMat = new THREE.MeshBasicMaterial({
@@ -835,12 +842,11 @@ export class CinemaEngine {
           }
         });
 
-        // 3 Rows x 3 Columns = 9 Lights total (no extra rearBar)
-        // Length reduced (from 2.4 to 1.55), width increased up to 15% (0.8 * 1.15 = 0.92)
+        // 4 Rows x 3 Columns = 12 Lights total
         rowZs.forEach((z) => {
           colXs.forEach((x) => {
             const light = gltf.scene.clone(true);
-            light.scale.set(1.55, 0.8, 0.92);
+            light.scale.set(1.75, 0.82, 0.94);
             light.position.set(x, ceilingY, z);
             this.ceilingLightGroup.add(light);
           });
@@ -895,7 +901,7 @@ export class CinemaEngine {
       bar.quaternion.copy(quat);
       this.sideLightGroup.add(bar);
 
-      const normZ = Math.max(0.0, Math.min(1.0, (mid.z - (-5.80)) / (1.70 - (-5.80))));
+      const normZ = Math.max(0.0, Math.min(1.0, (mid.z - (-6.80)) / (4.70 - (-6.80))));
       this.sideBarItems.push({
         coreMesh: core,
         glowMesh: glow,
@@ -927,7 +933,7 @@ export class CinemaEngine {
 
       this.sideLightGroup.add(jointGroup);
 
-      const normZ = Math.max(0.0, Math.min(1.0, (pos.z - (-5.80)) / (1.70 - (-5.80))));
+      const normZ = Math.max(0.0, Math.min(1.0, (pos.z - (-6.80)) / (4.70 - (-6.80))));
       this.sideBarItems.push({
         coreMesh: coreSphere,
         glowMesh: glowSphere,
@@ -938,32 +944,21 @@ export class CinemaEngine {
       });
     };
 
-    // Positioned at X = +-5.14 (6cm in front of solid side wall inner face at +-5.20)
-    // 4 distinct diagonal neon slashes matching the reference cinema design (\ / \ /)
-    // Preserves color and 75% thinner width strictly as requested
-    [-5.14, 5.14].forEach((xSide) => {
-      // Bar 1: Rear down-forward slant (\) from ceiling to above rear seats
-      const p0 = new THREE.Vector3(xSide, 5.20, 1.50);
-      const p1 = new THREE.Vector3(xSide, 1.10, 0.70);
-
-      // Bar 2: Mid-rear up-forward slant (/) from above seats to ceiling
-      const p2 = new THREE.Vector3(xSide, 1.10, 0.35);
-      const p3 = new THREE.Vector3(xSide, 5.20, -0.45);
-
-      // Bar 3: Mid-front down-forward slant (\) from ceiling to above floor
-      const p4 = new THREE.Vector3(xSide, 5.20, -1.15);
-      const p5 = new THREE.Vector3(xSide, 0.90, -3.15);
-
-      // Bar 4: Front up-forward slant (/) from stage/floor to ceiling near screen
-      const p6 = new THREE.Vector3(xSide, 0.90, -3.80);
-      const p7 = new THREE.Vector3(xSide, 5.20, -5.80);
+    // Positioned at X = +-5.79 (6cm in front of solid side wall inner face at +-5.85)
+    // Continuous, unbroken 5-point connected lightning zigzag (p0 -> p1 -> p2 -> p3 -> p4)
+    [-5.79, 5.79].forEach((xSide) => {
+      const p0 = new THREE.Vector3(xSide, 6.45, -6.80); // Front top near screen
+      const p1 = new THREE.Vector3(xSide, 1.25, -3.90); // Front-mid bottom valley
+      const p2 = new THREE.Vector3(xSide, 6.45, -1.00); // Center top peak
+      const p3 = new THREE.Vector3(xSide, 2.55,  1.85); // Rear-mid bottom valley (clears elevated rows)
+      const p4 = new THREE.Vector3(xSide, 6.45,  4.70); // Rear top near back wall
 
       createNeonBar(p0, p1);
+      createNeonBar(p1, p2);
       createNeonBar(p2, p3);
-      createNeonBar(p4, p5);
-      createNeonBar(p6, p7);
+      createNeonBar(p3, p4);
 
-      [p0, p1, p2, p3, p4, p5, p6, p7].forEach((pt) => addJoint(pt));
+      [p0, p1, p2, p3, p4].forEach((pt) => addJoint(pt));
     });
 
     this.sideLightGroup.visible = this.lightingState.sideLights !== "off";
@@ -982,23 +977,23 @@ export class CinemaEngine {
       opacity: 0.75
     });
 
-    // Sleek thin booth window outer frame flush on auditorium rear wall (Z = 1.85)
+    // Sleek thin booth window outer frame flush on auditorium rear wall (Z = 5.30), scaled 30% smaller
     const frameMat = new THREE.MeshStandardMaterial({
       color: 0x070912,
       roughness: 0.8
     });
-    const windowFrame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.1, 0.06), frameMat);
-    windowFrame.position.set(0, 3.80, 1.83);
+    const windowFrame = new THREE.Mesh(new THREE.BoxGeometry(1.96, 0.875, 0.05), frameMat);
+    windowFrame.position.set(0, 4.90, 5.275);
     boothGroup.add(windowFrame);
 
-    // Dual transparent glass window panes
-    [-0.6, 0.6].forEach((xGlass) => {
-      const glassPane = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.75, 0.02), glassMat);
-      glassPane.position.set(xGlass, 3.80, 1.81);
+    // Dual transparent glass window panes (offset cleanly forward of frame face at 5.25 to prevent Z-fighting)
+    [-0.49, 0.49].forEach((xGlass) => {
+      const glassPane = new THREE.Mesh(new THREE.BoxGeometry(0.735, 0.595, 0.015), glassMat);
+      glassPane.position.set(xGlass, 4.90, 5.240);
       boothGroup.add(glassPane);
     });
 
-    // Intense glowing projector lens core and halo (thin, flush with glass)
+    // Projection lamp lens core and halo (scaled 30% smaller)
     const lensCoreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const lensGlowMat = new THREE.MeshBasicMaterial({
       color: 0x93c5fd,
@@ -1007,39 +1002,234 @@ export class CinemaEngine {
       blending: THREE.AdditiveBlending
     });
 
-    const lensCore = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.015, 32), lensCoreMat);
+    const lensCore = new THREE.Mesh(new THREE.CylinderGeometry(0.063, 0.063, 0.014, 32), lensCoreMat);
     lensCore.rotation.x = Math.PI / 2;
-    lensCore.position.set(0, 3.80, 1.78);
+    lensCore.position.set(0, 4.90, 5.222);
     boothGroup.add(lensCore);
 
-    const lensHalo = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.012, 32), lensGlowMat);
+    const lensHalo = new THREE.Mesh(new THREE.CylinderGeometry(0.126, 0.126, 0.012, 32), lensGlowMat);
     lensHalo.rotation.x = Math.PI / 2;
-    lensHalo.position.set(0, 3.80, 1.77);
+    lensHalo.position.set(0, 4.90, 5.214);
     boothGroup.add(lensHalo);
 
     // Glowing projection booth interior light
-    this.boothLight = new THREE.PointLight(0xa5f3fc, 3.5, 14, 1.0);
-    this.boothLight.position.set(0, 3.80, 1.70);
+    this.boothLight = new THREE.PointLight(0xa5f3fc, 3.8, 15, 1.0);
+    this.boothLight.position.set(0, 4.90, 5.10);
     boothGroup.add(this.boothLight);
 
-    // Cinema projector light beam shining from booth directly onto the screen (0, 3.20, -8.00)
-    this.projectorBeam = new THREE.SpotLight(0xcfd8ff, 8.0, 24, Math.PI / 7, 0.35, 0.8);
-    this.projectorBeam.position.set(0, 3.80, 1.65);
-    this.projectorBeam.target.position.set(0, 3.20, -8.00);
+    // Cinema projector light beam shining from booth directly onto the screen (0, 4.10, -9.10)
+    this.projectorBeam = new THREE.SpotLight(0xcfd8ff, 8.5, 28, Math.PI / 6.5, 0.35, 0.8);
+    this.projectorBeam.position.set(0, 4.90, 5.05);
+    this.projectorBeam.target.position.set(0, 4.10, -9.10);
     boothGroup.add(this.projectorBeam);
     boothGroup.add(this.projectorBeam.target);
 
     this.scene.add(boothGroup);
   }
 
-  // --- 100-Seat Boutique Cinema Screen ---
+  private createExitSignTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 192;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return new THREE.CanvasTexture(canvas);
+
+    // Matte dark cinema acrylic backing
+    ctx.fillStyle = "#040807";
+    ctx.fillRect(0, 0, 512, 192);
+
+    // Very light, mild emerald ambient backlight diffusion (never blinding in dark room)
+    const radial = ctx.createRadialGradient(256, 96, 12, 256, 96, 220);
+    radial.addColorStop(0, "rgba(52, 211, 153, 0.14)");
+    radial.addColorStop(0.55, "rgba(16, 185, 129, 0.06)");
+    radial.addColorStop(1, "rgba(4, 8, 7, 0)");
+    ctx.fillStyle = radial;
+    ctx.fillRect(0, 0, 512, 192);
+
+    // Subtle hairline sign border
+    ctx.strokeStyle = "rgba(52, 211, 153, 0.25)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(14, 14, 484, 164, 16);
+    ctx.stroke();
+
+    // Soft, mildly illuminated "EXIT" lettering in dim cinema emerald-mint
+    ctx.shadowColor = "rgba(52, 211, 153, 0.35)";
+    ctx.shadowBlur = 12;
+    ctx.font = "700 94px 'Satoshi', system-ui, -apple-system, sans-serif";
+    ctx.fillStyle = "rgba(110, 231, 183, 0.56)";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("EXIT", 256, 99);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    if (THREE.SRGBColorSpace) {
+      texture.colorSpace = THREE.SRGBColorSpace;
+    }
+    return texture;
+  }
+
+  private buildExitDoors() {
+    const exitSignTex = this.createExitSignTexture();
+
+    const jambMat = new THREE.MeshStandardMaterial({
+      color: 0x070a14, // Dark anodized architectural charcoal frame matching walls
+      roughness: 0.45,
+      metalness: 0.65
+    });
+
+    const doorLeafMat = new THREE.MeshStandardMaterial({
+      color: 0x0b1224, // Matte midnight slate-navy acoustic fire door panel
+      roughness: 0.72,
+      metalness: 0.25
+    });
+
+    const seamMat = new THREE.MeshStandardMaterial({
+      color: 0x03050a,
+      roughness: 0.90
+    });
+
+    const kickPlateMat = new THREE.MeshStandardMaterial({
+      color: 0x162035, // Dark gunmetal kickplate
+      roughness: 0.38,
+      metalness: 0.78
+    });
+
+    const pushBarMat = new THREE.MeshStandardMaterial({
+      color: 0x3b4963, // Brushed dark steel horizontal panic bar
+      roughness: 0.28,
+      metalness: 0.88
+    });
+
+    const visionTrimMat = new THREE.MeshStandardMaterial({
+      color: 0x050811,
+      roughness: 0.50,
+      metalness: 0.60
+    });
+
+    const visionGlassMat = new THREE.MeshStandardMaterial({
+      color: 0x060b16, // Deep tinted fire-rated observation glass slit
+      roughness: 0.12,
+      metalness: 0.92
+    });
+
+    const signHousingMat = new THREE.MeshStandardMaterial({
+      color: 0x05070e,
+      roughness: 0.55,
+      metalness: 0.65
+    });
+
+    const signFaceMat = new THREE.MeshBasicMaterial({
+      map: exitSignTex,
+      transparent: true,
+      opacity: 0.78
+    });
+
+    const createSingleExitAssembly = (): THREE.Group => {
+      const doorGroup = new THREE.Group();
+
+      // Door scaled naturally to ~0.70m characters:
+      // Clear opening = 0.76m wide (two 0.376m fire leaves) x 0.94m tall
+      const doorHeight = 0.94;
+      const frameWidth = 0.85;
+
+      // 1. Anodized Outer Jamb Frame (Left, Right, Top Header)
+      const leftJamb = new THREE.Mesh(new THREE.BoxGeometry(0.045, doorHeight + 0.045, 0.055), jambMat);
+      leftJamb.position.set(-0.4025, (doorHeight + 0.045) / 2, 0.025);
+      doorGroup.add(leftJamb);
+
+      const rightJamb = new THREE.Mesh(new THREE.BoxGeometry(0.045, doorHeight + 0.045, 0.055), jambMat);
+      rightJamb.position.set(0.4025, (doorHeight + 0.045) / 2, 0.025);
+      doorGroup.add(rightJamb);
+
+      const topLintel = new THREE.Mesh(new THREE.BoxGeometry(frameWidth, 0.045, 0.055), jambMat);
+      topLintel.position.set(0, doorHeight + 0.0225, 0.025);
+      doorGroup.add(topLintel);
+
+      // Flush Metal Threshold Sill at carpet level
+      const threshold = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.006, 0.050), kickPlateMat);
+      threshold.position.set(0, 0.003, 0.022);
+      doorGroup.add(threshold);
+
+      // Center meeting-stile weather seal shadow gap between double doors
+      const centerSeam = new THREE.Mesh(new THREE.BoxGeometry(0.006, doorHeight, 0.026), seamMat);
+      centerSeam.position.set(0, doorHeight / 2, 0.015);
+      doorGroup.add(centerSeam);
+
+      // 2. Dual Acoustic Fire-Exit Door Leaves
+      [-0.191, 0.191].forEach((leafX) => {
+        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.374, doorHeight, 0.024), doorLeafMat);
+        leaf.position.set(leafX, doorHeight / 2, 0.014);
+        leaf.castShadow = true;
+        leaf.receiveShadow = true;
+        doorGroup.add(leaf);
+
+        // Dark brushed stainless bottom kickplate
+        const kickPlate = new THREE.Mesh(new THREE.BoxGeometry(0.356, 0.15, 0.004), kickPlateMat);
+        kickPlate.position.set(leafX, 0.080, 0.027);
+        doorGroup.add(kickPlate);
+
+        // Horizontal Panic / Push Crash Bar calibrated to character hand height (Y = 0.39m)
+        const crashBar = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.016, 0.016), pushBarMat);
+        crashBar.position.set(leafX, 0.39, 0.044);
+        crashBar.castShadow = true;
+        doorGroup.add(crashBar);
+
+        [-0.122, 0.122].forEach((bx) => {
+          const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.026, 0.018), jambMat);
+          bracket.position.set(leafX + bx, 0.39, 0.035);
+          doorGroup.add(bracket);
+        });
+
+        // Vertical fire-rated dark tinted vision glass slit + slim bezel
+        const glassTrim = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.255, 0.004), visionTrimMat);
+        glassTrim.position.set(leafX, 0.67, 0.027);
+        doorGroup.add(glassTrim);
+
+        const glassPane = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.236, 0.004), visionGlassMat);
+        glassPane.position.set(leafX, 0.67, 0.0295);
+        doorGroup.add(glassPane);
+      });
+
+      // 3. Mildly Glowing Overhead "EXIT" Sign (very light & gentle in dark playback)
+      const signHousing = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.088, 0.032), signHousingMat);
+      signHousing.position.set(0, 1.045, 0.020);
+      doorGroup.add(signHousing);
+
+      const signFace = new THREE.Mesh(new THREE.PlaneGeometry(0.222, 0.072), signFaceMat);
+      signFace.position.set(0, 1.045, 0.0375);
+      doorGroup.add(signFace);
+
+      // Feather-soft localized sheen onto top frame only
+      const exitGlowLight = new THREE.PointLight(0x34d399, 0.12, 0.90, 2.0);
+      exitGlowLight.position.set(0, 1.01, 0.075);
+      doorGroup.add(exitGlowLight);
+
+      return doorGroup;
+    };
+
+    // Place symmetrically on Front-Left and Front-Right corridor walls (between curved stage & Row A apron)
+    const leftExit = createSingleExitAssembly();
+    leftExit.position.set(-5.85, 0.0, -5.95);
+    leftExit.rotation.y = Math.PI / 2;
+    this.scene.add(leftExit);
+
+    const rightExit = createSingleExitAssembly();
+    rightExit.position.set(5.85, 0.0, -5.95);
+    rightExit.rotation.y = -Math.PI / 2;
+    this.scene.add(rightExit);
+  }
+
+  // --- 300-Seat Grand Curved IMAX Cinema Screen ---
 
   private setupScreen() {
     const screenWidth = this.screenWidth;
     const screenHeight = this.screenHeight;
     const curveRadius = this.screenRadius;
 
-    const screenGeo = new THREE.PlaneGeometry(screenWidth, screenHeight, 96, 32);
+    const screenGeo = new THREE.PlaneGeometry(screenWidth, screenHeight, 128, 32);
     const pos = screenGeo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
@@ -1133,7 +1323,7 @@ export class CinemaEngine {
     const frameGeo = new THREE.PlaneGeometry(
       screenWidth + frameThickness * 2,
       screenHeight + frameThickness * 2,
-      96,
+      128,
       32
     );
     const fPos = frameGeo.attributes.position;
@@ -1148,13 +1338,13 @@ export class CinemaEngine {
     this.scene.add(frameMesh);
 
     // Dynamic projection bounce light casting natural neutral bounce onto stage and auditorium
-    this.screenLight = new THREE.PointLight(0xf1f5f9, 0.0, 22, 1.0);
-    this.screenLight.position.set(0, 3.20, -6.50);
+    this.screenLight = new THREE.PointLight(0xf1f5f9, 0.0, 25, 1.0);
+    this.screenLight.position.set(0, 4.10, -7.40);
     this.scene.add(this.screenLight);
 
     // Dynamic wide stage bounce light casting authentic screen ambilight onto stage, floor and front rows
-    this.screenStageBounceLight = new THREE.PointLight(0xf1f5f9, 0.0, 14, 1.2);
-    this.screenStageBounceLight.position.set(0, 0.60, -6.00);
+    this.screenStageBounceLight = new THREE.PointLight(0xf1f5f9, 0.0, 16, 1.2);
+    this.screenStageBounceLight.position.set(0, 0.70, -6.50);
     this.scene.add(this.screenStageBounceLight);
   }
 
@@ -1621,17 +1811,17 @@ export class CinemaEngine {
           }
 
           case "chase": {
-            // High-speed Laser Runner tracer bouncing along the zigzag
-            const runnerNorm = ((elapsed * 0.7) % 1.0);
-            const runnerZ = runnerNorm * 7.50 - 5.80;
+            // High-speed Laser Runner tracer bouncing along the wall neon zigzag
+            const runnerNorm = ((elapsed * 0.65) % 1.0);
+            const runnerZ = runnerNorm * 11.50 - 6.80;
             const laserCyan = new THREE.Color(0x06b6d4);
             dominantSideColor.copy(laserCyan);
             dominantSideIntensity = 2.6 * this.curSideLightsBrightness;
 
             this.sideBarItems.forEach((item) => {
               const dist = Math.abs(item.z - runnerZ);
-              const headFactor = Math.exp(-Math.pow(dist / 1.8, 2));
-              const trail = (item.z < runnerZ && runnerZ - item.z < 4.5) ? (1.0 - (runnerZ - item.z) / 4.5) * 0.4 : 0.0;
+              const headFactor = Math.exp(-Math.pow(dist / 2.2, 2));
+              const trail = (item.z < runnerZ && runnerZ - item.z < 5.0) ? (1.0 - (runnerZ - item.z) / 5.0) * 0.42 : 0.0;
               const intensity = Math.min(1.0, headFactor + trail);
 
               item.glowMat.color.copy(laserCyan);
@@ -1931,16 +2121,22 @@ export class CinemaEngine {
     this.ambientLight = new THREE.HemisphereLight(0x3b82f6, 0x111c38, 1.4);
     this.scene.add(this.ambientLight);
 
-    // Soft overhead downlight casting gentle shadows on seats
+    // Soft overhead downlight casting gentle shadows across the 12-row 300-seat auditorium
     this.downlight = new THREE.DirectionalLight(0x93c5fd, 0.95);
-    this.downlight.position.set(0, 5.8, -1.0);
+    this.downlight.position.set(0, 7.3, -2.15);
     this.downlight.castShadow = true;
-    this.downlight.shadow.mapSize.width = 1024;
-    this.downlight.shadow.mapSize.height = 1024;
+    this.downlight.shadow.mapSize.width = 2048;
+    this.downlight.shadow.mapSize.height = 2048;
+    this.downlight.shadow.camera.left = -7;
+    this.downlight.shadow.camera.right = 7;
+    this.downlight.shadow.camera.top = 10;
+    this.downlight.shadow.camera.bottom = -10;
+    this.downlight.shadow.camera.near = 0.5;
+    this.downlight.shadow.camera.far = 18;
     this.scene.add(this.downlight);
   }
 
-  // --- Stadium Seating & Glowing Blue Stairways (5 Rows x 20 Seats = 100 Seats Capacity) ---
+  // --- Stadium Seating & Glowing Blue Stairways (12 Rows x 25 Tight-Joined Seats = 300 Seats) ---
 
   private buildSeats() {
     this.seats = [];
@@ -1974,144 +2170,128 @@ export class CinemaEngine {
       metalness: 0.18
     });
 
-    const rowCount = 5;
-    const startZ = -3.20;
-    const rowSpacing = 1.05; // 5 rows x 20 seats = 100 seats
-    const tierHeight = 0.12; // Realistic comfortable stadium rise (reduced from 0.22)
+    const rowCount = 12;
+    const startZ = -4.10;
+    const rowSpacing = 0.76; // Compact 30% reduced row gap (0.76m pitch)
+    const tierHeight = 0.18; // Elevated stadium rake (0.18m rise/row, Row A = 0.18m .. Row L = 2.16m)
 
-    // 10 Twin Modules per row = 20 seats per row (5 Rows x 20 = 100 seats total!)
-    // Left Block: 2 twin modules (Cols 1-4) at X = -4.40, -3.64
-    // Left Aisle: stairs at X = -2.775 (filling between X = -3.25 and -2.30)
-    // Center Block: 6 twin modules (Cols 5-16) at X = -1.90, -1.14, -0.38, 0.38, 1.14, 1.90
-    // Right Aisle: stairs at X = +2.775 (filling between X = 2.30 and 3.25)
-    // Right Block: 2 twin modules (Cols 17-20) at X = +3.64, +4.40
-    const moduleCols: { modX: number; colA: number; colB: number }[] = [
-      { modX: -4.40, colA: 1, colB: 2 },
-      { modX: -3.64, colA: 3, colB: 4 },
-      { modX: -1.90, colA: 5, colB: 6 },
-      { modX: -1.14, colA: 7, colB: 8 },
-      { modX: -0.38, colA: 9, colB: 10 },
-      { modX: 0.38, colA: 11, colB: 12 },
-      { modX: 1.14, colA: 13, colB: 14 },
-      { modX: 1.90, colA: 15, colB: 16 },
-      { modX: 3.64, colA: 17, colB: 18 },
-      { modX: 4.40, colA: 19, colB: 20 }
+    // Seamlessly Joined 4-17-4 Layout = 25 seats per row (exact 0.691m twin / 0.519m single pitch, ZERO armrest gaps!)
+    type RowSlot =
+      | { type: "twin"; modX: number; colA: number; colB: number; removeLeftOuter?: boolean; removeRightOuter?: boolean }
+      | { type: "single"; x: number; col: number };
+
+    const rowSlots: RowSlot[] = [
+      // Left VIP Block (1-4)
+      { type: "twin", modX: -5.041, colA: 1, colB: 2, removeRightOuter: true },
+      { type: "twin", modX: -4.350, colA: 3, colB: 4 },
+      // Center Prime Block (5-21, Seat 13 dead center at X = 0.00)
+      { type: "twin", modX: -2.592, colA: 5, colB: 6, removeRightOuter: true },
+      { type: "twin", modX: -1.901, colA: 7, colB: 8, removeRightOuter: true },
+      { type: "twin", modX: -1.210, colA: 9, colB: 10, removeRightOuter: true },
+      { type: "twin", modX: -0.519, colA: 11, colB: 12, removeRightOuter: true },
+      { type: "single", x: 0.000, col: 13 },
+      { type: "twin", modX: 0.519, colA: 14, colB: 15, removeLeftOuter: true, removeRightOuter: true },
+      { type: "twin", modX: 1.210, colA: 16, colB: 17, removeRightOuter: true },
+      { type: "twin", modX: 1.901, colA: 18, colB: 19, removeRightOuter: true },
+      { type: "twin", modX: 2.592, colA: 20, colB: 21 },
+      // Right VIP Block (22-25)
+      { type: "twin", modX: 4.350, colA: 22, colB: 23, removeRightOuter: true },
+      { type: "twin", modX: 5.041, colA: 24, colB: 25 }
     ];
 
-    // 1. Build Seating Block Platforms (Left, Center, Right) for all 5 rows
+    // 1. Build Seating Block Platforms (Left, Center, Right) flush wall-to-wall for all 12 rows
     for (let r = 0; r < rowCount; r++) {
       const rowZ = startZ + r * rowSpacing;
-      const rowY = 0.12 + r * tierHeight; // Tier 0 (Row A) = 0.12m, Tier 4 (Row E) = 0.60m
-      const riserDepth = rowSpacing; // 1.05m
-      const platZ = rowZ - 0.345;
+      const rowY = (r + 1) * tierHeight; // Row A = 0.18m, Row L = 2.16m
+      const riserDepth = rowSpacing; // 0.76m
+      const platZ = rowZ - 0.31; // Platform spans [rowZ - 0.69, rowZ + 0.07], flush behind chair backrest
 
-      // Left seating block platform: from left wall (X = -5.20) to left aisle (X = -3.25)
-      // Width = 1.95m, centered at X = -4.225. ZERO GAP TO LEFT WALL!
-      const leftPlat = new THREE.Mesh(new THREE.BoxGeometry(1.95, rowY, riserDepth), riserPlatformMat);
-      leftPlat.position.set(-4.225, rowY / 2, platZ);
+      // Left VIP block platform: from left wall (X = -5.85) to left aisle (X = -3.95) -> Width 1.90m, centered at -4.90
+      const leftPlat = new THREE.Mesh(new THREE.BoxGeometry(1.90, rowY, riserDepth), riserPlatformMat);
+      leftPlat.position.set(-4.90, rowY / 2, platZ);
       leftPlat.receiveShadow = true;
       stadiumGroup.add(leftPlat);
 
-      // Center prime seating block platform: from left aisle (X = -2.30) to right aisle (X = 2.30)
-      // Width = 4.60m, centered at X = 0.
-      const centerPlat = new THREE.Mesh(new THREE.BoxGeometry(4.60, rowY, riserDepth), riserPlatformMat);
+      // Center prime seating block platform: from left aisle (X = -3.00) to right aisle (X = +3.00) -> Width 6.00m, centered at 0
+      const centerPlat = new THREE.Mesh(new THREE.BoxGeometry(6.00, rowY, riserDepth), riserPlatformMat);
       centerPlat.position.set(0, rowY / 2, platZ);
       centerPlat.receiveShadow = true;
       stadiumGroup.add(centerPlat);
 
-      // Right seating block platform: from right aisle (X = 3.25) to right wall (X = 5.20)
-      // Width = 1.95m, centered at X = +4.225. ZERO GAP TO RIGHT WALL!
-      const rightPlat = new THREE.Mesh(new THREE.BoxGeometry(1.95, rowY, riserDepth), riserPlatformMat);
-      rightPlat.position.set(4.225, rowY / 2, platZ);
+      // Right VIP block platform: from right aisle (X = +3.95) to right wall (X = +5.85) -> Width 1.90m, centered at +4.90
+      const rightPlat = new THREE.Mesh(new THREE.BoxGeometry(1.90, rowY, riserDepth), riserPlatformMat);
+      rightPlat.position.set(4.90, rowY / 2, platZ);
       rightPlat.receiveShadow = true;
       stadiumGroup.add(rightPlat);
     }
 
-    // Front entrance apron step in front of Row A (connecting floor at Y=0 to Row A at Y=0.12)
-    // Wall-to-wall width = 10.4m, from Z = -4.595 to -4.070 (depth 0.525m, height 0.06m)
-    const frontStepM = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.06, 0.525), riserPlatformMat);
-    frontStepM.position.set(0, 0.03, -4.3325);
+    // Front entrance apron step in front of Row A (connecting floor at Y=0 to Row A at Y=0.18)
+    // Wall-to-wall width = 11.70m, from Z = -5.17 to -4.79 (depth 0.38m, height 0.09m)
+    const frontStepM = new THREE.Mesh(new THREE.BoxGeometry(11.70, 0.09, 0.38), riserPlatformMat);
+    frontStepM.position.set(0, 0.045, -4.98);
     frontStepM.receiveShadow = true;
     stadiumGroup.add(frontStepM);
 
-    // Continuous, Solid Aisle Staircases (Left at X = -2.775, Right at X = +2.775, width 0.95m)
-    // 100% solid carpeted risers from front entrance to top rear walkway with ZERO gaps or holes!
-    const stairSteps = [
-      { zStart: -4.595, zEnd: -4.070, y: 0.06 }, // Step 0: Floor to Row A entrance
-      { zStart: -4.070, zEnd: -3.545, y: 0.12 }, // Step 1: Row A Landing (flush with Row A)
-      { zStart: -3.545, zEnd: -3.020, y: 0.18 }, // Step 2: Row A -> Row B intermediate step
-      { zStart: -3.020, zEnd: -2.495, y: 0.24 }, // Step 3: Row B Landing (flush with Row B)
-      { zStart: -2.495, zEnd: -1.970, y: 0.30 }, // Step 4: Row B -> Row C intermediate step
-      { zStart: -1.970, zEnd: -1.445, y: 0.36 }, // Step 5: Row C Landing (flush with Row C)
-      { zStart: -1.445, zEnd: -0.920, y: 0.42 }, // Step 6: Row C -> Row D intermediate step
-      { zStart: -0.920, zEnd: -0.395, y: 0.48 }, // Step 7: Row D Landing (flush with Row D)
-      { zStart: -0.395, zEnd:  0.130, y: 0.54 }, // Step 8: Row D -> Row E intermediate step
-      { zStart:  0.130, zEnd:  1.180, y: 0.60 }  // Step 9: Row E Landing & Walkway (flush with Row E)
-    ];
+    // Continuous 24-step Solid Aisle Staircases (Left at X = -3.475, Right at X = +3.475, width 0.95m)
+    const stepCount = rowCount * 2; // 24 half-steps (2 steps per row, 0.09m climb each)
+    const stepDepth = rowSpacing / 2; // 0.38m
+    const stairStartZ = -5.17;
 
-    [-2.775, 2.775].forEach((stairX) => {
-      const stepWidth = 0.95;
-      stairSteps.forEach((st) => {
-        const stepDepth = st.zEnd - st.zStart;
-        const stepCenterZ = (st.zStart + st.zEnd) / 2;
+    for (let s = 0; s < stepCount; s++) {
+      const zStart = stairStartZ + s * stepDepth;
+      const zEnd = (s === stepCount - 1) ? 4.330 : zStart + stepDepth;
+      const actualDepth = zEnd - zStart;
+      const stepCenterZ = (zStart + zEnd) / 2;
+      const stepY = (s + 1) * (tierHeight / 2); // 0.09m .. 2.16m
 
-        // Solid carpeted step block extending from floor Y=0 up to step height
-        const stepMesh = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, st.y, stepDepth), riserPlatformMat);
-        stepMesh.position.set(stairX, st.y / 2, stepCenterZ);
+      [-3.475, 3.475].forEach((stairX) => {
+        const stepWidth = 0.95;
+        const stepMesh = new THREE.Mesh(new THREE.BoxGeometry(stepWidth, stepY, actualDepth), riserPlatformMat);
+        stepMesh.position.set(stairX, stepY / 2, stepCenterZ);
         stepMesh.receiveShadow = true;
         stadiumGroup.add(stepMesh);
 
-        // Safety LED tread strip placed cleanly on each step nosing (front edge)
-        // Width reduced by 50% (0.475m centered in aisle) and profile thickness reduced by 50%
+        // Safety LED tread strip cleanly centered on each step nosing
         const lightWidth = stepWidth * 0.50;
         const ledStrip = new THREE.Mesh(new THREE.BoxGeometry(lightWidth, 0.008, 0.015), this.stairLedMat);
-        ledStrip.position.set(stairX, st.y + 0.004, st.zStart + 0.008);
+        ledStrip.position.set(stairX, stepY + 0.004, zStart + 0.008);
         stadiumGroup.add(ledStrip);
 
         const ledGlow = new THREE.Mesh(new THREE.BoxGeometry(lightWidth, 0.018, 0.022), this.stairLedGlowMat);
         ledGlow.position.copy(ledStrip.position);
         stadiumGroup.add(ledGlow);
       });
-    });
+    }
 
-    // Top rear walkway platform (behind Row E to rear wall at Z = 1.85m)
-    // Row E platform ends at (startZ + 4 * rowSpacing) + 0.18 = 1.18m.
-    // Rear wall inner face is at 1.85m.
-    // Walkway spans Z from 1.18m to 1.85m (depth 0.67m, centered at Z = 1.515m).
-    // Height = 0.60m. Width = 10.4m (wall to wall). ZERO GAP IN BACK!
-    const topTierY = 0.12 + (rowCount - 1) * tierHeight; // 0.60m
-    const rearWalkwayDepth = 1.85 - 1.18;
+    // Top rear walkway platform (behind Row L at Z = 4.33m to rear wall at Z = 5.30m)
+    const topTierY = rowCount * tierHeight; // 2.16m
+    const rearStartZ = 4.330;
+    const rearWallInnerZ = 5.300;
+    const rearWalkwayDepth = rearWallInnerZ - rearStartZ;
     const rearWalkway = new THREE.Mesh(
-      new THREE.BoxGeometry(10.4, topTierY, rearWalkwayDepth + 0.02),
+      new THREE.BoxGeometry(11.70, topTierY, rearWalkwayDepth + 0.02),
       riserPlatformMat
     );
-    rearWalkway.position.set(0, topTierY / 2, 1.18 + rearWalkwayDepth / 2);
+    rearWalkway.position.set(0, topTierY / 2, rearStartZ + rearWalkwayDepth / 2);
     rearWalkway.receiveShadow = true;
     stadiumGroup.add(rearWalkway);
 
-    // 2. Build Glowing Row Numbering & Alphabet Plaques FIXED DIRECTLY ON SEATS
+    // 2. Build Glowing Row Numbering & Alphabet Plaques FIXED DIRECTLY ON SEATS (Rows A through L)
     for (let r = 0; r < rowCount; r++) {
       const rowZ = startZ + r * rowSpacing;
-      const rowY = 0.12 + r * tierHeight;
+      const rowY = (r + 1) * tierHeight;
       const chairZ = rowZ - 0.15;
-      const rowLetter = String.fromCharCode(65 + r); // A through E
-      // Mounted flush on the outer side panel of the aisle / wall seats
+      const rowLetter = String.fromCharCode(65 + r); // A through L
       const plaqueY = rowY + 0.20;
       const plaqueZ = chairZ - 0.09;
 
       const plaqueConfigs: [number, number, string][] = [
-        // Left Section - Outer wall face (Seat 1 outer standard facing wall)
-        [-4.786, -1, "1 - 4"],
-        // Left Section - Aisle face (Seat 4 side standard facing left walkway)
-        [-3.254, 1, "1 - 4"],
-        // Center Section - Left aisle face (Seat 5 side standard facing left walkway)
-        [-2.286, -1, "5 - 16"],
-        // Center Section - Right aisle face (Seat 16 side standard facing right walkway)
-        [2.286, 1, "5 - 16"],
-        // Right Section - Aisle face (Seat 17 side standard facing right walkway)
-        [3.254, -1, "17 - 20"],
-        // Right Section - Outer wall face (Seat 20 outer standard facing wall)
-        [4.786, 1, "17 - 20"]
+        [-5.429, -1, "1 - 4"],
+        [-3.962, 1, "1 - 4"],
+        [-2.980, -1, "5 - 21"],
+        [2.980, 1, "5 - 21"],
+        [3.962, -1, "22 - 25"],
+        [5.429, 1, "22 - 25"]
       ];
 
       plaqueConfigs.forEach(([px, normalX, rangeText]) => {
@@ -2121,70 +2301,95 @@ export class CinemaEngine {
       });
     }
 
-    // 3. Pre-create All 100 Seat Records & Raycast Hitboxes
+    // 3. Pre-create All 300 Seat Records & Raycast Hitboxes
     let seatIndex = 0;
     for (let r = 0; r < rowCount; r++) {
       const rowZ = startZ + r * rowSpacing;
-      const rowY = 0.12 + r * tierHeight;
+      const rowY = (r + 1) * tierHeight;
       const chairZ = rowZ - 0.15;
       const rowNumber = r + 1;
 
-      moduleCols.forEach((colInfo) => {
-        // Left Seat in twin module
-        const leftX = colInfo.modX - 0.18;
-        const hitboxLeft = new THREE.Mesh(
-          new THREE.BoxGeometry(0.36, 1.00, 0.60),
-          new THREE.MeshBasicMaterial({ visible: false })
-        );
-        hitboxLeft.position.set(leftX, rowY + 0.50, chairZ);
-        hitboxLeft.userData = { seatIndex, row: rowNumber, col: colInfo.colA, x: leftX, y: rowY, z: chairZ };
-        stadiumGroup.add(hitboxLeft);
-        this.seatHitboxes.push(hitboxLeft);
+      rowSlots.forEach((slot) => {
+        if (slot.type === "twin") {
+          const leftX = slot.modX - 0.174;
+          const hitboxLeft = new THREE.Mesh(
+            new THREE.BoxGeometry(0.346, 1.00, 0.52),
+            new THREE.MeshBasicMaterial({ visible: false })
+          );
+          hitboxLeft.position.set(leftX, rowY + 0.50, chairZ);
+          hitboxLeft.userData = { seatIndex, row: rowNumber, col: slot.colA, x: leftX, y: rowY, z: chairZ };
+          stadiumGroup.add(hitboxLeft);
+          this.seatHitboxes.push(hitboxLeft);
 
-        this.seats.push({
-          index: seatIndex,
-          row: rowNumber,
-          col: colInfo.colA,
-          x: leftX,
-          y: rowY,
-          z: chairZ,
-          occupantId: null,
-          occupiedBy: null,
-          group: null,
-          fabricMeshes: []
-        });
-        seatIndex++;
+          this.seats.push({
+            index: seatIndex,
+            row: rowNumber,
+            col: slot.colA,
+            x: leftX,
+            y: rowY,
+            z: chairZ,
+            occupantId: null,
+            occupiedBy: null,
+            group: null,
+            fabricMeshes: []
+          });
+          seatIndex++;
 
-        // Right Seat in twin module
-        const rightX = colInfo.modX + 0.18;
-        const hitboxRight = new THREE.Mesh(
-          new THREE.BoxGeometry(0.36, 1.00, 0.60),
-          new THREE.MeshBasicMaterial({ visible: false })
-        );
-        hitboxRight.position.set(rightX, rowY + 0.50, chairZ);
-        hitboxRight.userData = { seatIndex, row: rowNumber, col: colInfo.colB, x: rightX, y: rowY, z: chairZ };
-        stadiumGroup.add(hitboxRight);
-        this.seatHitboxes.push(hitboxRight);
+          const rightX = slot.modX + 0.174;
+          const hitboxRight = new THREE.Mesh(
+            new THREE.BoxGeometry(0.346, 1.00, 0.52),
+            new THREE.MeshBasicMaterial({ visible: false })
+          );
+          hitboxRight.position.set(rightX, rowY + 0.50, chairZ);
+          hitboxRight.userData = { seatIndex, row: rowNumber, col: slot.colB, x: rightX, y: rowY, z: chairZ };
+          stadiumGroup.add(hitboxRight);
+          this.seatHitboxes.push(hitboxRight);
 
-        this.seats.push({
-          index: seatIndex,
-          row: rowNumber,
-          col: colInfo.colB,
-          x: rightX,
-          y: rowY,
-          z: chairZ,
-          occupantId: null,
-          occupiedBy: null,
-          group: null,
-          fabricMeshes: []
-        });
-        seatIndex++;
+          this.seats.push({
+            index: seatIndex,
+            row: rowNumber,
+            col: slot.colB,
+            x: rightX,
+            y: rowY,
+            z: chairZ,
+            occupantId: null,
+            occupiedBy: null,
+            group: null,
+            fabricMeshes: []
+          });
+          seatIndex++;
+        } else {
+          // Single seat slot (Col 13 dead center)
+          const singleX = slot.x;
+          const hitboxSingle = new THREE.Mesh(
+            new THREE.BoxGeometry(0.346, 1.00, 0.52),
+            new THREE.MeshBasicMaterial({ visible: false })
+          );
+          hitboxSingle.position.set(singleX, rowY + 0.50, chairZ);
+          hitboxSingle.userData = { seatIndex, row: rowNumber, col: slot.col, x: singleX, y: rowY, z: chairZ };
+          stadiumGroup.add(hitboxSingle);
+          this.seatHitboxes.push(hitboxSingle);
+
+          this.seats.push({
+            index: seatIndex,
+            row: rowNumber,
+            col: slot.col,
+            x: singleX,
+            y: rowY,
+            z: chairZ,
+            occupantId: null,
+            occupiedBy: null,
+            group: null,
+            fabricMeshes: []
+          });
+          seatIndex++;
+        }
       });
     }
 
     this.scene.add(stadiumGroup);
 
-    // 3. Load GLTF cinema_chair.glb and clone for all 100 seats
+    // 4. Load GLTF cinema_chair.glb and clone for all 300 seats
     this.gltfLoader.load(
       "/assets/theater/cinema_chair.glb",
       (gltf) => {
@@ -2240,61 +2445,102 @@ export class CinemaEngine {
         pivotGroup.add(gltf.scene);
         pivotGroup.rotation.y = Math.PI; // Face the screen (-Z)
 
+        // Pre-build Single Chair Template (Left seat + Left & Center armrests, Right seat removed, shifted +0.1736 to center on X=0)
+        const singlePivotGroup = new THREE.Group();
+        const singleClone = pivotGroup.clone(true);
+        const removeRightNames = new Set(["Object_4", "Object_6", "Object_12", "Object_24", "Object_8", "Object_16"]);
+        const toRemoveSingle: THREE.Object3D[] = [];
+        singleClone.traverse((child) => {
+          if (removeRightNames.has(child.name)) {
+            toRemoveSingle.push(child);
+          }
+        });
+        toRemoveSingle.forEach((child) => {
+          if (child.parent) child.parent.remove(child);
+        });
+        singleClone.position.x = 0.1736;
+        singlePivotGroup.add(singleClone);
+
         let currentSeatIdx = 0;
         for (let r = 0; r < rowCount; r++) {
           const rowZ = startZ + r * rowSpacing;
-          const rowY = 0.12 + r * tierHeight;
+          const rowY = (r + 1) * tierHeight;
           const chairZ = rowZ - 0.15;
 
-          moduleCols.forEach((colInfo) => {
-            const moduleClone = pivotGroup.clone(true);
-
-            // Eliminate duplicate armrests between adjacent modules in the same block
-            const isLastInBlock = colInfo.colB === 4 || colInfo.colB === 16 || colInfo.colB === 20;
-            if (!isLastInBlock) {
+          rowSlots.forEach((slot) => {
+            if (slot.type === "twin") {
+              const moduleClone = pivotGroup.clone(true);
               const toRemove: THREE.Object3D[] = [];
               moduleClone.traverse((child) => {
-                if (child.name === "Object_8" || child.name === "Object_16") {
+                if (slot.removeRightOuter && (child.name === "Object_8" || child.name === "Object_16")) {
+                  toRemove.push(child);
+                }
+                if (slot.removeLeftOuter && (child.name === "Object_10" || child.name === "Object_18")) {
                   toRemove.push(child);
                 }
               });
               toRemove.forEach((child) => {
                 if (child.parent) child.parent.remove(child);
               });
-            }
 
-            moduleClone.position.set(colInfo.modX, rowY, chairZ);
-            stadiumGroup.add(moduleClone);
-            moduleClone.updateMatrixWorld(true);
+              moduleClone.position.set(slot.modX, rowY, chairZ);
+              stadiumGroup.add(moduleClone);
+              moduleClone.updateMatrixWorld(true);
 
-            // Separate fabric meshes
-            const leftFabrics: THREE.Mesh[] = [];
-            const rightFabrics: THREE.Mesh[] = [];
+              const leftMat = themeFabricMat.clone();
+              const rightMat = themeFabricMat.clone();
+              const leftFabrics: THREE.Mesh[] = [];
+              const rightFabrics: THREE.Mesh[] = [];
 
-            moduleClone.traverse((child) => {
-              if ((child as THREE.Mesh).isMesh && child.userData.isFabric) {
-                const mesh = child as THREE.Mesh;
-                mesh.material = themeFabricMat.clone();
-                const childCenter = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
-                if (childCenter.x < colInfo.modX) {
-                  leftFabrics.push(mesh);
-                } else {
-                  rightFabrics.push(mesh);
+              moduleClone.traverse((child) => {
+                if ((child as THREE.Mesh).isMesh && child.userData.isFabric) {
+                  const mesh = child as THREE.Mesh;
+                  const childCenter = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
+                  if (childCenter.x < slot.modX) {
+                    mesh.material = leftMat;
+                    leftFabrics.push(mesh);
+                  } else {
+                    mesh.material = rightMat;
+                    rightFabrics.push(mesh);
+                  }
                 }
+              });
+
+              if (this.seats[currentSeatIdx]) {
+                this.seats[currentSeatIdx].group = moduleClone;
+                this.seats[currentSeatIdx].fabricMeshes = leftFabrics;
               }
-            });
+              currentSeatIdx++;
 
-            if (this.seats[currentSeatIdx]) {
-              this.seats[currentSeatIdx].group = moduleClone;
-              this.seats[currentSeatIdx].fabricMeshes = leftFabrics;
-            }
-            currentSeatIdx++;
+              if (this.seats[currentSeatIdx]) {
+                this.seats[currentSeatIdx].group = moduleClone;
+                this.seats[currentSeatIdx].fabricMeshes = rightFabrics;
+              }
+              currentSeatIdx++;
+            } else {
+              // Single Seat Instance (Cols 3, 8, 13)
+              const singleInstance = singlePivotGroup.clone(true);
+              singleInstance.position.set(slot.x, rowY, chairZ);
+              stadiumGroup.add(singleInstance);
+              singleInstance.updateMatrixWorld(true);
 
-            if (this.seats[currentSeatIdx]) {
-              this.seats[currentSeatIdx].group = moduleClone;
-              this.seats[currentSeatIdx].fabricMeshes = rightFabrics;
+              const singleMat = themeFabricMat.clone();
+              const singleFabrics: THREE.Mesh[] = [];
+
+              singleInstance.traverse((child) => {
+                if ((child as THREE.Mesh).isMesh && child.userData.isFabric) {
+                  const mesh = child as THREE.Mesh;
+                  mesh.material = singleMat;
+                  singleFabrics.push(mesh);
+                }
+              });
+
+              if (this.seats[currentSeatIdx]) {
+                this.seats[currentSeatIdx].group = singleInstance;
+                this.seats[currentSeatIdx].fabricMeshes = singleFabrics;
+              }
+              currentSeatIdx++;
             }
-            currentSeatIdx++;
           });
         }
       },
@@ -2344,6 +2590,9 @@ export class CinemaEngine {
     if (user.id === this.localUserId) {
       this.position.set(user.position.x, user.position.y, user.position.z);
       this.rotation = user.rotation;
+      if (user.seatIndex === null) {
+        this.cameraYaw = user.position.x < -2.0 ? 0.30 : (user.position.x > 2.0 ? -0.30 : 0);
+      }
     }
 
     const charType = user.characterType || DEFAULT_CHARACTER;
@@ -2753,7 +3002,7 @@ export class CinemaEngine {
     this.activeEmote = null;
 
     if (currentSeat) {
-      this.position.set(currentSeat.x, currentSeat.y, currentSeat.z - 0.45);
+      this.position.set(currentSeat.x, currentSeat.y, currentSeat.z - 0.37);
       this.rotation = Math.PI;
       this.isGrounded = true;
       this.verticalVelocity = 0;
@@ -2975,69 +3224,58 @@ export class CinemaEngine {
     }
   }
 
-  // --- Exact Ground Physics & Collision for 5-Row x 20-Seat Theater ---
+  // --- Exact Ground Physics & Collision for 12-Row x 25-Seat (300-Seat) Tight-Joined Theater ---
 
   public getExactTheaterGround(x: number, z: number): number {
-    if (z < -5.40) {
+    if (z < -6.10) {
       // Curved Proscenium Stage & Steps below the curved screen
-      const stepR = 12.0;
+      const stepR = 13.6;
       const xCurve = (x * x) / (2 * stepR);
-      const stageEdge = -6.20 - xCurve;
-      if (z <= stageEdge) return 0.22; // Main stage apron
-      if (z <= stageEdge + 0.35) return 0.15; // Step 2 (higher riser)
-      if (z <= stageEdge + 0.65) return 0.075; // Step 1 (lower riser)
+      const stageEdge = -7.20 - xCurve;
+      if (z <= stageEdge) return 0.25; // Main stage apron
+      if (z <= stageEdge + 0.40) return 0.17; // Step 2 (higher riser)
+      if (z <= stageEdge + 0.75) return 0.085; // Step 1 (lower riser)
       return 0.0;
     }
-    if (z < -4.595) {
+    if (z < -5.17) {
       return 0.0;
     }
 
-    const isStairs = Math.abs(x - (-2.775)) <= 0.48 || Math.abs(x - 2.775) <= 0.48;
+    const isStairs = Math.abs(x - (-3.475)) <= 0.48 || Math.abs(x - 3.475) <= 0.48;
 
     if (isStairs) {
-      // 1-to-1 exact match with the 10-step continuous aisle staircase
-      if (z < -4.070) return 0.06;
-      if (z < -3.545) return 0.12;
-      if (z < -3.020) return 0.18;
-      if (z < -2.495) return 0.24;
-      if (z < -1.970) return 0.30;
-      if (z < -1.445) return 0.36;
-      if (z < -0.920) return 0.42;
-      if (z < -0.395) return 0.48;
-      if (z < 0.130)  return 0.54;
-      return 0.60;
+      // 1-to-1 exact match with the 24-step continuous aisle staircase (0.09m .. 2.16m)
+      const stepIdx = Math.max(0, Math.min(23, Math.floor((z - (-5.17)) / 0.38)));
+      return Math.min(2.16, (stepIdx + 1) * 0.09);
     }
 
-    // Seating blocks & outer side areas
-    if (z < -4.070) return 0.06; // Entrance apron
-    if (z < -3.020) return 0.12; // Row A platform
-    if (z < -1.970) return 0.24; // Row B platform
-    if (z < -0.920) return 0.36; // Row C platform
-    if (z < 0.130)  return 0.48; // Row D platform
-    return 0.60;                 // Row E platform & Top Rear Walkway
+    // Seating blocks across all 12 elevated tiers + Rear Walkway
+    if (z < -4.79) return 0.09; // Front entrance apron
+    const tierIdx = Math.max(0, Math.min(11, Math.floor((z - (-4.79)) / 0.76)));
+    return Math.min(2.16, (tierIdx + 1) * 0.18);
   }
 
   public checkTheaterCollision(x: number, z: number, radius: number = 0.14): boolean {
-    if (x - radius < -5.10 || x + radius > 5.10) return true;
-    if (z - radius < -8.30 || z + radius > 1.80) return true;
+    if (x - radius < -5.75 || x + radius > 5.75) return true;
+    if (z - radius < -9.50 || z + radius > 5.20) return true;
 
-    const startZ = -3.20;
-    const rowSpacing = 1.05;
-    const rowCount = 5;
+    const startZ = -4.10;
+    const rowSpacing = 0.76;
+    const rowCount = 12;
 
     for (let r = 0; r < rowCount; r++) {
       const rowZ = startZ + r * rowSpacing;
       const chairZ = rowZ - 0.15;
-      const chairZMin = chairZ - 0.30;
+      const chairZMin = chairZ - 0.20;
       const chairZMax = chairZ + 0.18;
 
       if (z + radius > chairZMin && z - radius < chairZMax) {
-        // Left VIP block (Seats 1-4): X in [-4.82, -3.22]
-        if (x + radius > -4.82 && x - radius < -3.22) return true;
-        // Center prime block (Seats 5-16): X in [-2.32, 2.32]
-        if (x + radius > -2.32 && x - radius < 2.32) return true;
-        // Right VIP block (Seats 17-20): X in [3.22, 4.82]
-        if (x + radius > 3.22 && x - radius < 4.82) return true;
+        // Left VIP block (Seats 1-4): X in [-5.43, -3.96]
+        if (x + radius > -5.43 && x - radius < -3.96) return true;
+        // Center prime block (Seats 5-21): X in [-2.98, +2.98]
+        if (x + radius > -2.98 && x - radius < 2.98) return true;
+        // Right VIP block (Seats 22-25): X in [+3.96, +5.43]
+        if (x + radius > 3.96 && x - radius < 5.43) return true;
       }
     }
 
@@ -3322,6 +3560,9 @@ export class CinemaEngine {
         ).multiplyScalar(dist);
 
         const desiredCameraPos = this.smoothedCameraTarget.clone().add(offset);
+        desiredCameraPos.x = THREE.MathUtils.clamp(desiredCameraPos.x, -5.70, 5.70);
+        desiredCameraPos.z = THREE.MathUtils.clamp(desiredCameraPos.z, -9.45, 5.15);
+        desiredCameraPos.y = Math.max(desiredCameraPos.y, 0.18);
         this.camera.position.lerp(desiredCameraPos, 0.22);
         this.camera.lookAt(this.smoothedCameraTarget);
       }
